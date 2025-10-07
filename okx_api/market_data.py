@@ -1,9 +1,12 @@
-from typing import List, Dict, Any
+import time
+from typing import List, Dict, Union
+
+import numpy as np
+import pandas as pd
+
 from .client import OKXClient
 from .models import Ticker, OrderBook, Candle, MarketData
-import time
-import pandas as pd
-import numpy as np
+
 
 class MarketDataRetriever:
     """
@@ -19,7 +22,35 @@ class MarketDataRetriever:
         """
         self.client = client
 
-    def get_all_tickers(self, instType: str = 'SPOT') -> List[Ticker]:
+    def get_all_symbol(self, instType: str = 'SPOT', currency: str = 'USDT') -> List[str]:
+        """
+        Get all instrument IDs for specified instrument type and currency
+
+        Args:
+            instType (str): Instrument type to retrieve symbols for.
+                           Options are:
+                           - 'SPOT': Spot trading pairs (e.g., BTC-USDT)
+                           - 'FUTURES': Futures contracts with expiration dates
+                           - 'SWAP': Perpetual swap contracts without expiration
+                           - 'OPTION': Options contracts
+            currency (str): Currency to filter by (e.g., 'USDT', 'USD'). Defaults to 'USDT'.
+
+        Returns:
+            List[str]: List of instrument IDs matching the specified type and currency
+        """
+        response = self.client.get_tickers(instType)
+        symbols = []
+
+        if response.get('code') == '0' and 'data' in response:
+            for ticker_data in response['data']:
+                instId = ticker_data.get('instId', '')
+                # If currency filter is specified, only add symbols that match
+                if currency is None or f'-{currency}' in instId:
+                    symbols.append(instId)
+
+        return symbols
+
+    def get_all_tickers(self, instType: str = 'SPOT', currency: str = 'USDT') -> List[Ticker]:
         """
         Get all tickers for specified instrument type
 
@@ -30,6 +61,8 @@ class MarketDataRetriever:
                            - 'FUTURES': Futures contracts with expiration dates
                            - 'SWAP': Perpetual swap contracts without expiration
                            - 'OPTION': Options contracts
+            currency (str, optional): Currency to filter by (e.g., 'USDT', 'USD').
+                                    If provided, only tickers ending with this currency will be returned.
 
         Returns:
             List[Ticker]: List of Ticker objects containing market data for all instruments of the specified type
@@ -53,7 +86,10 @@ class MarketDataRetriever:
                     bidSz=float(ticker_data.get('bidSz', 0)),
                     askSz=float(ticker_data.get('askSz', 0))
                 )
-                tickers.append(ticker)
+
+                # If currency filter is specified, only add tickers that match
+                if currency is None or f'-{currency}' in ticker.instId:
+                    tickers.append(ticker)
 
         return tickers
 
@@ -110,7 +146,7 @@ class MarketDataRetriever:
             )
         return None
 
-    def get_kline(self, instId: str, bar: str = '1m', limit: int = 100) -> List[Candle]:
+    def get_kline(self, instId: str, bar: str = '1m', limit: int = 100, return_dataframe: bool = True) -> Union[List[Candle], pd.DataFrame]:
         """
         Get kline/candlestick data
 
@@ -118,15 +154,20 @@ class MarketDataRetriever:
             instId (str): Instrument ID to retrieve kline data for (e.g., 'BTC-USDT', 'ETH-USD-SWAP')
             bar (str): Bar size/candle interval. Defaults to '1m'.
                       Options: '1m', '3m', '5m', '15m', '30m', '1H', '2H', '4H', '6H', '12H', '1D', '1W', '1M'
-            limit (int): Number of bars/candles to retrieve. Defaults to 100. Maximum is 100.
+            limit (int): Number of bars/candles to retrieve. Defaults to 100. Maximum is 300.
+            return_dataframe (bool): If True, returns pandas DataFrame. If False, returns List[Candle]. Defaults to True.
 
         Returns:
-            List[Candle]: List of Candle objects containing OHLCV data for the specified instrument
+            Union[List[Candle], pd.DataFrame]: Kline data in specified format
         """
         response = self.client.get_kline(instId, bar, limit)
-        candles = []
 
-        if response.get('code') == '0' and 'data' in response:
+        if response.get('code') != '0' or 'data' not in response:
+            return pd.DataFrame() if return_dataframe else []
+
+        # If not returning DataFrame, use original logic
+        if not return_dataframe:
+            candles = []
             for candle_data in response['data']:
                 candle = Candle(
                     ts=int(candle_data[0]),
@@ -138,8 +179,55 @@ class MarketDataRetriever:
                     volCcy=float(candle_data[6])
                 )
                 candles.append(candle)
+            return candles
 
-        return candles
+        # Convert to DataFrame efficiently using list comprehension (proven to be faster)
+        df = pd.DataFrame({
+            'timestamp': [int(candle[0]) for candle in response['data']],
+            'open': [float(candle[1]) for candle in response['data']],
+            'high': [float(candle[2]) for candle in response['data']],
+            'low': [float(candle[3]) for candle in response['data']],
+            'close': [float(candle[4]) for candle in response['data']],
+            'volume': [float(candle[5]) for candle in response['data']],
+            'volume_currency': [float(candle[6]) for candle in response['data']]
+        })
+
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df = df.sort_values('timestamp').reset_index(drop=True)
+
+        return df
+
+    def get_volume_filtered_symbols(self, instType: str = 'SPOT', currency: str = 'USDT',
+                                  min_vol_ccy: float = 100000) -> List[str]:
+        """
+        Get symbols filtered by minimum 24h volume
+
+        Args:
+            instType (str): Instrument type to retrieve symbols for.
+                           Options are:
+                           - 'SPOT': Spot trading pairs (e.g., BTC-USDT)
+                           - 'FUTURES': Futures contracts with expiration dates
+                           - 'SWAP': Perpetual swap contracts without expiration
+                           - 'OPTION': Options contracts
+            currency (str): Currency to filter by (e.g., 'USDT', 'USD'). Defaults to 'USDT'.
+            min_vol_ccy (float): Minimum 24h volume in currency to include. Defaults to 100,000.
+
+        Returns:
+            List[str]: List of instrument IDs with 24h volume >= min_vol_ccy, sorted by volume (descending)
+        """
+        tickers = self.get_all_tickers(instType, currency)
+
+        # Filter by minimum volume
+        filtered_symbols = []
+        for ticker in tickers:
+            if ticker.volCcy24h >= min_vol_ccy:
+                filtered_symbols.append(ticker.instId)
+
+        # Sort by volume (descending)
+        volume_dict = {ticker.instId: ticker.volCcy24h for ticker in tickers}
+        filtered_symbols.sort(key=lambda x: volume_dict.get(x, 0), reverse=True)
+
+        return filtered_symbols
 
     def get_market_data(self, instId: str, bar: str = '1m', kline_limit: int = 100) -> MarketData:
         """
@@ -156,7 +244,8 @@ class MarketDataRetriever:
         """
         ticker = self.get_ticker_by_symbol(instId)
         order_book = self.get_order_book(instId)
-        candles = self.get_kline(instId, bar, kline_limit)
+        # Get kline data as Candle objects for MarketData
+        candles = self.get_kline(instId, bar, kline_limit, return_dataframe=False)
 
         return MarketData(
             ticker=ticker,
@@ -166,7 +255,7 @@ class MarketDataRetriever:
         )
 
     def get_all_market_data(self, instType: str = 'SPOT', bar: str = '1m',
-                           kline_limit: int = 100) -> Dict[str, MarketData]:
+                            kline_limit: int = 100, currency: str = None) -> Dict[str, MarketData]:
         """
         Get complete market data for all instruments
 
@@ -180,18 +269,21 @@ class MarketDataRetriever:
             bar (str): Bar size/candle interval for kline data. Defaults to '1m'.
                       Options: '1m', '3m', '5m', '15m', '30m', '1H', '2H', '4H', '6H', '12H', '1D', '1W', '1M'
             kline_limit (int): Number of kline bars/candles to retrieve per instrument. Defaults to 100. Maximum is 100.
+            currency (str, optional): Currency to filter by (e.g., 'USDT', 'USD').
+                                    If provided, only instruments ending with this currency will be returned.
 
         Returns:
             Dict[str, MarketData]: Dictionary mapping instrument IDs to MarketData objects containing complete market data
         """
         all_data = {}
-        tickers = self.get_all_tickers(instType)
+        tickers = self.get_all_tickers(instType, currency)
 
         for ticker in tickers:
             instId = ticker.instId
             try:
                 order_book = self.get_order_book(instId)
-                candles = self.get_kline(instId, bar, kline_limit)
+                # Get kline data as Candle objects for MarketData
+                candles = self.get_kline(instId, bar, kline_limit, return_dataframe=False)
 
                 market_data = MarketData(
                     ticker=ticker,
@@ -210,7 +302,8 @@ class MarketDataRetriever:
 
         return all_data
 
-    def get_kline_with_ma(self, instId: str, bar: str = '1m', limit: int = 100, ma_periods: List[int] = None) -> pd.DataFrame:
+    def get_kline_with_ma(self, instId: str, bar: str = '1m', limit: int = 100,
+                          ma_periods: List[int] = None) -> pd.DataFrame:
         """
         Get kline data with moving averages
 
@@ -227,33 +320,11 @@ class MarketDataRetriever:
         if ma_periods is None:
             ma_periods = [5, 10, 20]
 
-        # Get kline data
-        kline_data = self.get_kline(instId, bar, limit)
+        # Get kline data (now returns DataFrame directly)
+        df = self.get_kline(instId, bar, limit)
 
-        if not kline_data:
+        if df.empty:
             return pd.DataFrame()
-
-        # Convert to DataFrame more efficiently using numpy
-        timestamps = np.array([candle.ts for candle in kline_data])
-        opens = np.array([candle.o for candle in kline_data])
-        highs = np.array([candle.h for candle in kline_data])
-        lows = np.array([candle.l for candle in kline_data])
-        closes = np.array([candle.c for candle in kline_data])
-        volumes = np.array([candle.vol for candle in kline_data])
-        volume_ccys = np.array([candle.volCcy for candle in kline_data])
-
-        df = pd.DataFrame({
-            'timestamp': timestamps,
-            'open': opens,
-            'high': highs,
-            'low': lows,
-            'close': closes,
-            'volume': volumes,
-            'volume_currency': volume_ccys
-        })
-
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df = df.sort_values('timestamp').reset_index(drop=True)
 
         # Calculate moving averages
         for period in ma_periods:

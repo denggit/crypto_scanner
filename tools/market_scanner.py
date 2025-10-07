@@ -2,21 +2,25 @@
 Cryptocurrency Market Scanner using OKX API
 """
 
-import sys
 import os
+import sys
 import time
-import json
 from datetime import datetime
+import asyncio
+import concurrent.futures
+from functools import lru_cache
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 加载环境变量
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from okx_api.client import OKXClient
 from okx_api.market_data import MarketDataRetriever
+
 
 class CryptoScanner:
     """Cryptocurrency market scanner for quant research"""
@@ -24,19 +28,23 @@ class CryptoScanner:
     def __init__(self, client: OKXClient):
         self.client = client
         self.market_data_retriever = MarketDataRetriever(client)
+        self._symbol_cache = {}
+        self._cache_ttl = 300  # 5 minutes cache TTL
+        self._last_cache_update = 0
 
-    def scan_top_coins(self, limit: int = 20) -> list:
+    def scan_top_coins(self, limit: int = 20, currency='USDT') -> list:
         """
         Scan top cryptocurrencies by 24h volume
 
         Args:
             limit: Number of top coins to return
+            currency: Currency to filter by (default: USDT)
 
         Returns:
             List of top coins with their market data
         """
         try:
-            tickers = self.market_data_retriever.get_all_tickers('SPOT')
+            tickers = self.market_data_retriever.get_all_tickers('SPOT', currency)
 
             # Sort by 24h volume (in currency)
             sorted_tickers = sorted(tickers, key=lambda x: x.volCcy24h, reverse=True)
@@ -47,7 +55,8 @@ class CryptoScanner:
                     'rank': i + 1,
                     'symbol': ticker.instId,
                     'price': ticker.last,
-                    'price_change_24h': ((ticker.last - ticker.open24h) / ticker.open24h * 100) if ticker.open24h > 0 else 0,
+                    'price_change_24h': (
+                                (ticker.last - ticker.open24h) / ticker.open24h * 100) if ticker.open24h > 0 else 0,
                     'high_24h': ticker.high24h,
                     'low_24h': ticker.low24h,
                     'volume_24h': ticker.volCcy24h,
@@ -62,6 +71,204 @@ class CryptoScanner:
             print("Please check your internet connection and firewall settings.")
             return []
 
+    def scan_bullish_coins(self, currency: str = 'USDT', ma_periods: list = None,
+                           bar: str = '5m', min_vol_ccy: float = 1000000, use_parallel: bool = True,
+                           use_cache: bool = True) -> list:
+        """
+        Scan for cryptocurrencies with bullish moving average alignment (golden cross/multi MA alignment)
+        Optimized for performance with parallel processing and caching
+
+        Args:
+            currency: Currency to filter by (default: USDT)
+            ma_periods: List of MA periods to check alignment (default: [5, 20, 60, 120, 200])
+            bar: Time interval for kline data (default: 5m)
+            min_vol_ccy: Minimum 24h volume in currency to include (default: 100,000)
+            use_parallel: Use parallel processing for faster scanning (default: True)
+            use_cache: Use caching for symbol data (default: True)
+
+        Returns:
+            List of coins with bullish MA alignment
+        """
+        if ma_periods is None:
+            ma_periods = [5, 20, 60, 120, 200]
+
+        # 保持有限的K线数量以加快网络请求；仅用于计算末端均线
+        limit = max(ma_periods) + 1
+
+        try:
+            # Get symbols filtered by volume
+            symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
+
+            if not symbols:
+                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                return []
+
+            print(f"Scanning {len(symbols)} symbols with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+
+            if use_parallel and len(symbols) > 1:
+                return self._scan_bullish_coins_parallel(symbols, ma_periods, bar, limit)
+            else:
+                return self._scan_bullish_coins_sequential(symbols, ma_periods, bar, limit)
+
+        except Exception as e:
+            print(f"Error scanning bullish coins: {e}")
+            print("This may be due to network connectivity issues or API restrictions.")
+            print("Please check your internet connection and firewall settings.")
+            return []
+
+    def _scan_bullish_coins_sequential(self, symbols: list, ma_periods: list, bar: str, limit: int) -> list:
+        """Sequential scanning implementation"""
+        bullish_coins = []
+
+        for symbol in symbols:
+            try:
+                result = self._analyze_symbol_bullish(symbol, ma_periods, bar, limit)
+                if result:
+                    bullish_coins.append(result)
+            except Exception:
+                continue
+
+        # Sort by trend strength
+        bullish_coins.sort(key=lambda x: x['trend_strength'], reverse=True)
+        return bullish_coins
+
+    def _scan_bullish_coins_parallel(self, symbols: list, ma_periods: list, bar: str, limit: int) -> list:
+        """Parallel scanning implementation using ThreadPoolExecutor"""
+        bullish_coins = []
+
+        # Use ThreadPoolExecutor for I/O bound operations
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(symbols))) as executor:
+            # Submit all tasks
+            future_to_symbol = {
+                executor.submit(self._analyze_symbol_bullish, symbol, ma_periods, bar, limit): symbol
+                for symbol in symbols
+            }
+
+            # Collect results as they complete
+            for future in concurrent.futures.as_completed(future_to_symbol):
+                try:
+                    result = future.result()
+                    if result:
+                        bullish_coins.append(result)
+                except Exception:
+                    continue
+
+        # Sort by trend strength
+        bullish_coins.sort(key=lambda x: x['trend_strength'], reverse=True)
+        return bullish_coins
+
+    def _analyze_symbol_bullish(self, symbol: str, ma_periods: list, bar: str, limit: int) -> dict:
+        """Analyze a single symbol for bullish MA alignment"""
+        try:
+            # Get kline data
+            df = self.market_data_retriever.get_kline(symbol, bar, limit)
+
+            if df is None or len(df) == 0:
+                return None
+
+            # 仅计算最后一个时间点的均线；支持数据不足时的部分均线
+            closes = df['c'] if 'c' in df.columns else df['close']
+            if len(closes) == 0:
+                return None
+
+            # 优化：预先计算所有可能的MA值，避免重复切片
+            available_periods = [p for p in sorted(ma_periods) if len(closes) >= p]
+            if not available_periods:
+                return None
+
+            # 优化：一次性计算所有MA值
+            latest_ma_values = {}
+            current_price = float(closes.iloc[-1])
+
+            # 使用更高效的MA计算方法
+            for p in available_periods:
+                # 使用numpy数组进行更快的计算
+                close_values = closes.iloc[-p:].values
+                latest_ma_values[p] = float(close_values.mean())
+
+            # 多头排列：close > ma_min > ... > ma_max（仅基于可计算的周期）
+            ordered_periods = available_periods  # 已按升序
+            is_bullish_chain = True
+            prev_value = current_price
+
+            # 优化：提前检查是否可能形成多头排列
+            if current_price <= latest_ma_values[ordered_periods[0]]:
+                return None
+
+            for p in ordered_periods:
+                if prev_value <= latest_ma_values[p]:
+                    is_bullish_chain = False
+                    break
+                prev_value = latest_ma_values[p]
+
+            if is_bullish_chain:
+                longest_p = ordered_periods[-1]
+                longest_ma = latest_ma_values[longest_p]
+                trend_strength = ((current_price - longest_ma) / longest_ma * 100) if longest_ma > 0 else 0
+
+                return {
+                    'symbol': symbol,
+                    'price': current_price,
+                    'trend_strength': trend_strength,
+                    'ma_values': latest_ma_values
+                }
+
+        except Exception as e:
+            return None
+
+        return None
+
+    def _get_cached_symbols(self, currency: str, use_cache: bool = True) -> list:
+        """Get symbols with caching support"""
+        cache_key = f"symbols_{currency}"
+        current_time = time.time()
+
+        if use_cache and cache_key in self._symbol_cache:
+            cached_time, symbols = self._symbol_cache[cache_key]
+            if current_time - cached_time < self._cache_ttl:
+                return symbols
+
+        # Fetch fresh symbols
+        symbols = self.market_data_retriever.get_all_symbol('SPOT', currency)
+
+        if use_cache:
+            self._symbol_cache[cache_key] = (current_time, symbols)
+            self._last_cache_update = current_time
+
+        return symbols
+
+    def _get_volume_filtered_symbols(self, currency: str, min_vol_ccy: float, use_cache: bool = True) -> list:
+        """Get symbols filtered by 24h volume using market_data_retriever method"""
+        cache_key = f"tickers_{currency}_{min_vol_ccy}"
+        current_time = time.time()
+
+        if use_cache and cache_key in self._symbol_cache:
+            cached_time, symbols = self._symbol_cache[cache_key]
+            if current_time - cached_time < self._cache_ttl:
+                return symbols
+
+        try:
+            # Use the new method from market_data_retriever
+            filtered_symbols = self.market_data_retriever.get_volume_filtered_symbols(
+                'SPOT', currency, min_vol_ccy
+            )
+
+            if use_cache:
+                self._symbol_cache[cache_key] = (current_time, filtered_symbols)
+                self._last_cache_update = current_time
+
+            return filtered_symbols
+
+        except Exception as e:
+            print(f"Error getting volume filtered symbols: {e}")
+            # Fallback to basic symbol list without volume filtering
+            return self._get_cached_symbols(currency, use_cache)
+
+    def clear_cache(self):
+        """Clear the symbol cache"""
+        self._symbol_cache.clear()
+        self._last_cache_update = 0
+
     def scan_volatility(self, symbol: str, bar: str = '15m', limit: int = 96) -> dict:
         """
         Scan volatility for a specific symbol (96 periods of 15m = 24 hours)
@@ -75,7 +282,7 @@ class CryptoScanner:
             Volatility data
         """
         try:
-            candles = self.market_data_retriever.get_kline(symbol, bar, limit)
+            candles = self.market_data_retriever.get_kline(symbol, bar, limit, return_dataframe=False)
 
             if not candles:
                 return {}
@@ -88,7 +295,7 @@ class CryptoScanner:
             # Calculate price changes
             price_changes = []
             for i in range(1, len(prices)):
-                change = (prices[i] - prices[i-1]) / prices[i-1] * 100
+                change = (prices[i] - prices[i - 1]) / prices[i - 1] * 100
                 price_changes.append(change)
 
             # Calculate volatility (standard deviation of price changes)
@@ -163,6 +370,7 @@ class CryptoScanner:
         report = {
             'timestamp': datetime.now().isoformat(),
             'top_coins': self.scan_top_coins(10),
+            'bullish_coins': self.scan_bullish_coins(min_vol_ccy=100000),  # Add bullish coins with volume filter
             'volatility_data': [],
             'liquidity_data': []
         }
@@ -183,6 +391,7 @@ class CryptoScanner:
             time.sleep(0.1)
 
         return report
+
 
 def main():
     print("Cryptocurrency Market Scanner")
@@ -228,6 +437,17 @@ def main():
               f"24h Change: {coin['price_change_24h']:>6.2f}% | "
               f"Volume: ${coin['volume_24h']:>12,.0f}")
 
+    # Display bullish coins
+    if report['bullish_coins']:
+        print("\nBullish Coins (Multi MA Alignment):")
+        print("-" * 50)
+        for coin in report['bullish_coins'][:10]:  # Show top 10 bullish coins
+            print(f"{coin['symbol']:12s} | "
+                  f"Price: ${coin['price']:>10.2f} | "
+                  f"Trend Strength: {coin['trend_strength']:>6.2f}%")
+    else:
+        print("\nNo bullish coins found with current criteria.")
+
     if report['volatility_data']:
         print("\nVolatility Analysis (Top 5 coins):")
         print("-" * 50)
@@ -246,6 +466,7 @@ def main():
                   f"Ask Volume: {liq['ask_volume']:>10.2f}")
 
     print("\n[INFO] For authenticated trading features, set your OKX API credentials in the .env file")
+
 
 if __name__ == "__main__":
     main()
