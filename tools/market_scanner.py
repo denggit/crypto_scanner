@@ -9,6 +9,7 @@ from datetime import datetime
 import asyncio
 import concurrent.futures
 from functools import lru_cache
+import pandas as pd
 
 # Add parent directory to path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -749,6 +750,203 @@ class CryptoScanner:
 
         return None
 
+    def scan_volume_breakout(self, currency: str = 'USDT', bar: str = '5m',
+                           min_vol_ccy: float = 1000000, recent_periods: int = 3,
+                           base_periods: int = 20, volume_multiplier: float = 1.5,
+                           use_parallel: bool = True, use_cache: bool = True) -> list:
+        """
+        扫描放量突破形态
+
+        检测币种是否伴随量能爆发突破前期高点
+        趋势的起点往往伴随量能爆发
+
+        条件：
+        1. 最近3根K线的平均成交量 > 前20根平均成交量的1.5倍
+        2. 价格突破近20根K线高点
+
+        Args:
+            currency: 交易对货币 (default: USDT)
+            bar: K线时间间隔 (default: 15m)
+            min_vol_ccy: 最小24小时交易量 (default: 1,000,000)
+            recent_periods: 近期成交量计算周期 (default: 3)
+            base_periods: 基准成交量计算周期 (default: 20)
+            volume_multiplier: 成交量放大倍数 (default: 1.5)
+            use_parallel: 是否使用并行处理 (default: True)
+            use_cache: 是否使用缓存 (default: True)
+
+        Returns:
+            放量突破形态的币种列表
+        """
+        try:
+            # 获取交易量过滤的币种
+            symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
+
+            if not symbols:
+                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                return []
+
+            print(f"Scanning {len(symbols)} symbols for volume breakout patterns")
+
+            # 需要足够的数据计算突破
+            limit = base_periods + recent_periods + 5
+
+            if use_parallel and len(symbols) > 1:
+                return self._scan_volume_breakout_parallel(
+                    symbols, bar, limit, recent_periods, base_periods, volume_multiplier
+                )
+            else:
+                return self._scan_volume_breakout_sequential(
+                    symbols, bar, limit, recent_periods, base_periods, volume_multiplier
+                )
+
+        except Exception as e:
+            print(f"Error scanning volume breakout: {e}")
+            print("This may be due to network connectivity issues or API restrictions.")
+            print("Please check your internet connection and firewall settings.")
+            return []
+
+    def _scan_volume_breakout_sequential(self, symbols: list, bar: str, limit: int,
+                                        recent_periods: int, base_periods: int,
+                                        volume_multiplier: float) -> list:
+        """顺序扫描放量突破形态"""
+        volume_breakout_coins = []
+
+        for symbol in symbols:
+            try:
+                result = self._analyze_symbol_volume_breakout(
+                    symbol, bar, limit, recent_periods, base_periods, volume_multiplier
+                )
+                if result:
+                    volume_breakout_coins.append(result)
+            except Exception:
+                continue
+
+        # 按突破强度排序
+        volume_breakout_coins.sort(key=lambda x: x['breakout_strength'], reverse=True)
+        return volume_breakout_coins
+
+    def _scan_volume_breakout_parallel(self, symbols: list, bar: str, limit: int,
+                                      recent_periods: int, base_periods: int,
+                                      volume_multiplier: float) -> list:
+        """并行扫描放量突破形态"""
+        volume_breakout_coins = []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(symbols))) as executor:
+            future_to_symbol = {
+                executor.submit(
+                    self._analyze_symbol_volume_breakout,
+                    symbol, bar, limit, recent_periods, base_periods, volume_multiplier
+                ): symbol
+                for symbol in symbols
+            }
+
+            for future in concurrent.futures.as_completed(future_to_symbol):
+                try:
+                    result = future.result()
+                    if result:
+                        volume_breakout_coins.append(result)
+                except Exception:
+                    continue
+
+        # 按突破强度排序
+        volume_breakout_coins.sort(key=lambda x: x['breakout_strength'], reverse=True)
+        return volume_breakout_coins
+
+    def _analyze_symbol_volume_breakout(self, symbol: str, bar: str, limit: int,
+                                       recent_periods: int, base_periods: int,
+                                       volume_multiplier: float) -> dict:
+        """
+        分析单个币种的放量突破形态
+
+        判断逻辑：
+        1. 最近3根K线的平均成交量 > 前20根平均成交量的1.5倍
+        2. 价格突破近20根K线高点
+        """
+        try:
+            # 获取K线数据
+            df = self.market_data_retriever.get_kline(symbol, bar, limit)
+
+            if df is None or len(df) < base_periods + recent_periods:
+                return None
+
+            # 获取价格和成交量数据
+            highs = df['h'] if 'h' in df.columns else df['high']
+            closes = df['c'] if 'c' in df.columns else df['close']
+            volumes = df['vol'] if 'vol' in df.columns else df['volume']
+
+            if len(highs) < base_periods + recent_periods:
+                return None
+
+            # 确保没有NaN值
+            if highs.isnull().any() or closes.isnull().any() or volumes.isnull().any():
+                return None
+
+            # 计算成交量条件
+            # 最近3根K线的平均成交量
+            recent_volumes = volumes.iloc[-recent_periods:]
+            if recent_volumes.isnull().any() or len(recent_volumes) < recent_periods:
+                return None
+            recent_volume_avg = recent_volumes.mean()
+
+            # 前20根K线的平均成交量（排除最近3根）
+            base_volumes = volumes.iloc[-(base_periods + recent_periods):-recent_periods]
+            if base_volumes.isnull().any() or len(base_volumes) < base_periods:
+                return None
+            base_volume_avg = base_volumes.mean()
+
+            # 避免除零错误
+            if base_volume_avg <= 0:
+                return None
+
+            # 成交量放大条件
+            volume_condition = recent_volume_avg > base_volume_avg * volume_multiplier
+
+            # 计算价格突破条件
+            # 前20根K线的高点（排除最近3根）
+            base_highs = highs.iloc[-(base_periods + recent_periods):-recent_periods]
+            if base_highs.isnull().any() or len(base_highs) < base_periods:
+                return None
+            previous_high = base_highs.max()
+
+            # 当前价格
+            current_price = float(closes.iloc[-1])
+
+            # 避免除零错误
+            if previous_high <= 0:
+                return None
+
+            # 价格突破条件
+            price_condition = current_price > previous_high
+
+            # 综合判断
+            if volume_condition and price_condition:
+                # 计算突破强度
+                volume_ratio = recent_volume_avg / base_volume_avg
+                price_breakout_ratio = (current_price - previous_high) / previous_high * 100
+
+                breakout_strength = (
+                    (volume_ratio - 1) * 0.6 +  # 成交量强度权重60%
+                    min(price_breakout_ratio / 5, 1) * 0.4  # 价格突破强度权重40%，限制在5%以内
+                )
+
+                return {
+                    'symbol': symbol,
+                    'current_price': current_price,
+                    'breakout_high': previous_high,
+                    'price_breakout_ratio': price_breakout_ratio,
+                    'recent_volume_avg': recent_volume_avg,
+                    'base_volume_avg': base_volume_avg,
+                    'volume_ratio': volume_ratio,
+                    'breakout_strength': breakout_strength
+                }
+
+        except Exception as e:
+            # 可以在这里记录日志用于调试
+            # print(f"Error analyzing {symbol}: {e}")
+            return None
+
+        return None
+
     def generate_market_report(self) -> dict:
         """
         Generate a comprehensive market report
@@ -762,6 +960,7 @@ class CryptoScanner:
             'ma_alignment_coins': self.scan_ma_alignment(min_vol_ccy=100000),  # Add MA alignment coins with volume filter
             'ma_convergence_breakout_coins': self.scan_ma_convergence_breakout(min_vol_ccy=100000),  # Add MA convergence breakout coins
             'momentum_early_coins': self.scan_momentum_early(min_vol_ccy=100000),  # Add momentum early coins
+            'volume_breakout_coins': self.scan_volume_breakout(min_vol_ccy=100000),  # Add volume breakout coins
             'volatility_data': [],
             'liquidity_data': []
         }
@@ -863,6 +1062,18 @@ def main():
                   f"Volume: {coin['volume_ratio']:>4.1f}x")
     else:
         print("\nNo early momentum coins found with current criteria.")
+
+    # Display volume breakout coins
+    if report['volume_breakout_coins']:
+        print("\nVolume Breakout Coins (High Volume + Price Breakout):")
+        print("-" * 50)
+        for coin in report['volume_breakout_coins'][:10]:  # Show top 10 volume breakout coins
+            print(f"{coin['symbol']:12s} | "
+                  f"Price: ${coin['current_price']:>10.2f} | "
+                  f"Volume: {coin['volume_ratio']:>4.1f}x | "
+                  f"Breakout: {coin['price_breakout_ratio']:>5.2f}%")
+    else:
+        print("\nNo volume breakout coins found with current criteria.")
 
     if report['volatility_data']:
         print("\nVolatility Analysis (Top 5 coins):")
