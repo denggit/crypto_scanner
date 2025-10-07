@@ -20,7 +20,7 @@ load_dotenv()
 
 from okx_api.client import OKXClient
 from okx_api.market_data import MarketDataRetriever
-from tools.technical_indicators import sma, ema
+from tools.technical_indicators import sma, ema, rsi, macd
 
 
 class CryptoScanner:
@@ -551,6 +551,204 @@ class CryptoScanner:
 
         return None
 
+    def scan_momentum_early(self, currency: str = 'USDT', bar: str = '5m',
+                           min_vol_ccy: float = 1000000, rsi_low_threshold: float = 30,
+                           rsi_high_threshold: float = 55, volume_multiplier: float = 1.5,
+                           use_parallel: bool = True, use_cache: bool = True) -> list:
+        """
+        扫描动量早期启动形态（RSI/MACD 启动型）
+
+        检测币种是否处于"刚刚从低位启动"的阶段，尚未大涨但动能已启动
+
+        条件：
+        1. RSI 从低位（30 以下）反弹到 40-55 区间（上一根K线RSI < 30）
+        2. MACD DIF 上穿 DEA 且柱状图刚从负转正
+        3. 成交量放大 >= 1.5倍均量
+        4. 价格刚刚站上 MA20
+
+        Args:
+            currency: 交易对货币 (default: USDT)
+            bar: K线时间间隔 (default: 5m)
+            min_vol_ccy: 最小24小时交易量 (default: 1,000,000)
+            rsi_low_threshold: RSI低位阈值 (default: 30)
+            rsi_high_threshold: RSI高位阈值 (default: 55)
+            volume_multiplier: 成交量放大倍数 (default: 1.5)
+            use_parallel: 是否使用并行处理 (default: True)
+            use_cache: 是否使用缓存 (default: True)
+
+        Returns:
+            动量早期启动形态的币种列表
+        """
+        try:
+            # 获取交易量过滤的币种
+            symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
+
+            if not symbols:
+                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                return []
+
+            print(f"Scanning {len(symbols)} symbols for early momentum patterns")
+
+            # 需要足够的数据计算指标
+            limit = 50  # 50根K线用于计算RSI、MACD、MA等
+
+            if use_parallel and len(symbols) > 1:
+                return self._scan_momentum_early_parallel(
+                    symbols, bar, limit, rsi_low_threshold, rsi_high_threshold, volume_multiplier
+                )
+            else:
+                return self._scan_momentum_early_sequential(
+                    symbols, bar, limit, rsi_low_threshold, rsi_high_threshold, volume_multiplier
+                )
+
+        except Exception as e:
+            print(f"Error scanning early momentum: {e}")
+            print("This may be due to network connectivity issues or API restrictions.")
+            print("Please check your internet connection and firewall settings.")
+            return []
+
+    def _scan_momentum_early_sequential(self, symbols: list, bar: str, limit: int,
+                                       rsi_low_threshold: float, rsi_high_threshold: float,
+                                       volume_multiplier: float) -> list:
+        """顺序扫描动量早期启动形态"""
+        momentum_early_coins = []
+
+        for symbol in symbols:
+            try:
+                result = self._analyze_symbol_momentum_early(
+                    symbol, bar, limit, rsi_low_threshold, rsi_high_threshold, volume_multiplier
+                )
+                if result:
+                    momentum_early_coins.append(result)
+            except Exception:
+                continue
+
+        # 按综合动量强度排序
+        momentum_early_coins.sort(key=lambda x: x['momentum_score'], reverse=True)
+        return momentum_early_coins
+
+    def _scan_momentum_early_parallel(self, symbols: list, bar: str, limit: int,
+                                     rsi_low_threshold: float, rsi_high_threshold: float,
+                                     volume_multiplier: float) -> list:
+        """并行扫描动量早期启动形态"""
+        momentum_early_coins = []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(symbols))) as executor:
+            future_to_symbol = {
+                executor.submit(
+                    self._analyze_symbol_momentum_early,
+                    symbol, bar, limit, rsi_low_threshold, rsi_high_threshold, volume_multiplier
+                ): symbol
+                for symbol in symbols
+            }
+
+            for future in concurrent.futures.as_completed(future_to_symbol):
+                try:
+                    result = future.result()
+                    if result:
+                        momentum_early_coins.append(result)
+                except Exception:
+                    continue
+
+        # 按综合动量强度排序
+        momentum_early_coins.sort(key=lambda x: x['momentum_score'], reverse=True)
+        return momentum_early_coins
+
+    def _analyze_symbol_momentum_early(self, symbol: str, bar: str, limit: int,
+                                      rsi_low_threshold: float, rsi_high_threshold: float,
+                                      volume_multiplier: float) -> dict:
+        """
+        分析单个币种的动量早期启动形态
+
+        判断逻辑：
+        1. RSI 在 40-55 之间
+        2. MACD DIF > DEA 且柱状图刚从负转正
+        3. 成交量放大 >= 1.5倍均量
+        4. 收盘价刚刚突破 MA20
+        """
+        try:
+            # 获取K线数据
+            df = self.market_data_retriever.get_kline(symbol, bar, limit)
+
+            if df is None or len(df) < 30:  # 需要足够数据计算指标
+                return None
+
+            # 获取收盘价和成交量
+            closes = df['c'] if 'c' in df.columns else df['close']
+            volumes = df['vol'] if 'vol' in df.columns else df['volume']
+
+            if len(closes) < 30 or len(volumes) < 30:
+                return None
+
+            # 计算技术指标
+            # 1. RSI
+            rsi_values = rsi(closes, 14)
+            current_rsi = rsi_values.iloc[-1] if not pd.isna(rsi_values.iloc[-1]) else 50
+            prev_rsi = rsi_values.iloc[-2] if len(rsi_values) >= 2 and not pd.isna(rsi_values.iloc[-2]) else 50
+
+            # 2. MACD
+            macd_line, signal_line, histogram = macd(closes)
+            current_macd_line = macd_line.iloc[-1] if not pd.isna(macd_line.iloc[-1]) else 0
+            current_signal_line = signal_line.iloc[-1] if not pd.isna(signal_line.iloc[-1]) else 0
+            current_histogram = histogram.iloc[-1] if not pd.isna(histogram.iloc[-1]) else 0
+            prev_histogram = histogram.iloc[-2] if len(histogram) >= 2 and not pd.isna(histogram.iloc[-2]) else 0
+
+            # 3. MA20
+            ma20_series = sma(closes, 20)
+            current_ma20 = ma20_series.iloc[-1] if not pd.isna(ma20_series.iloc[-1]) else closes.iloc[-1]
+            prev_ma20 = ma20_series.iloc[-2] if len(ma20_series) >= 2 and not pd.isna(ma20_series.iloc[-2]) else closes.iloc[-2]
+
+            # 4. 成交量均线
+            volume_ma = sma(volumes, 20)
+            current_volume_ma = volume_ma.iloc[-1] if not pd.isna(volume_ma.iloc[-1]) else volumes.iloc[-1]
+
+            # 当前价格和成交量
+            current_price = float(closes.iloc[-1])
+            current_volume = float(volumes.iloc[-1])
+
+            # 检查动量早期启动条件
+            # 条件1: RSI 在 40-55 之间，且从低位反弹（上一根K线RSI < 30）
+            rsi_condition = (40 <= current_rsi <= rsi_high_threshold and
+                           prev_rsi < rsi_low_threshold)
+
+            # 条件2: MACD DIF > DEA 且柱状图刚从负转正
+            macd_condition = (current_macd_line > current_signal_line and
+                            current_histogram > 0 and prev_histogram < 0)
+
+            # 条件3: 成交量放大 >= 1.5倍均量
+            volume_condition = current_volume >= current_volume_ma * volume_multiplier
+
+            # 条件4: 价格刚刚突破 MA20
+            price_condition = (current_price > current_ma20 and
+                             closes.iloc[-2] <= prev_ma20)  # 上一根K线还在MA20下方
+
+            # 综合判断
+            if rsi_condition and macd_condition and volume_condition and price_condition:
+                # 计算动量强度分数
+                momentum_score = (
+                    (current_rsi - 40) / 15 * 0.3 +  # RSI强度
+                    (current_histogram / abs(current_histogram + 0.001)) * 0.3 +  # MACD强度
+                    (current_volume / current_volume_ma - 1) * 0.2 +  # 成交量强度
+                    ((current_price - current_ma20) / current_ma20) * 0.2  # 价格突破强度
+                )
+
+                return {
+                    'symbol': symbol,
+                    'current_price': current_price,
+                    'rsi': current_rsi,
+                    'macd_line': current_macd_line,
+                    'signal_line': current_signal_line,
+                    'macd_histogram': current_histogram,
+                    'ma20': current_ma20,
+                    'volume_ratio': current_volume / current_volume_ma,
+                    'momentum_score': momentum_score
+                }
+
+        except Exception as e:
+            return None
+
+        return None
+
     def generate_market_report(self) -> dict:
         """
         Generate a comprehensive market report
@@ -563,6 +761,7 @@ class CryptoScanner:
             'top_coins': self.scan_top_coins(10),
             'ma_alignment_coins': self.scan_ma_alignment(min_vol_ccy=100000),  # Add MA alignment coins with volume filter
             'ma_convergence_breakout_coins': self.scan_ma_convergence_breakout(min_vol_ccy=100000),  # Add MA convergence breakout coins
+            'momentum_early_coins': self.scan_momentum_early(min_vol_ccy=100000),  # Add momentum early coins
             'volatility_data': [],
             'liquidity_data': []
         }
@@ -651,6 +850,19 @@ def main():
                   f"Breakout: {coin['breakout_strength']:>5.2f}%")
     else:
         print("\nNo MA convergence + breakout coins found with current criteria.")
+
+    # Display momentum early coins
+    if report['momentum_early_coins']:
+        print("\nEarly Momentum Coins (RSI/MACD Startup):")
+        print("-" * 50)
+        for coin in report['momentum_early_coins'][:10]:  # Show top 10 momentum early coins
+            print(f"{coin['symbol']:12s} | "
+                  f"Price: ${coin['current_price']:>10.2f} | "
+                  f"RSI: {coin['rsi']:>5.1f} | "
+                  f"MACD: {coin['macd_histogram']:>7.4f} | "
+                  f"Volume: {coin['volume_ratio']:>4.1f}x")
+    else:
+        print("\nNo early momentum coins found with current criteria.")
 
     if report['volatility_data']:
         print("\nVolatility Analysis (Top 5 coins):")
