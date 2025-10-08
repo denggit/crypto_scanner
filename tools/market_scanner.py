@@ -21,7 +21,7 @@ load_dotenv()
 
 from okx_api.client import OKXClient
 from okx_api.market_data import MarketDataRetriever
-from tools.technical_indicators import sma, ema, rsi, macd
+from tools.technical_indicators import sma, ema, rsi, macd, atr
 
 
 class CryptoScanner:
@@ -370,6 +370,7 @@ class CryptoScanner:
                                     bar: str = '15m', min_vol_ccy: float = 1000000,
                                     convergence_threshold: float = 0.02,
                                     breakout_strength: float = 0.01,
+                                    atr_period: int = 14,
                                     use_parallel: bool = True,
                                     use_cache: bool = True) -> list:
         """
@@ -385,6 +386,7 @@ class CryptoScanner:
             min_vol_ccy: 最小24小时交易量 (default: 1,000,000)
             convergence_threshold: 均线粘合阈值 (default: 2%)
             breakout_strength: 突破强度阈值 (default: 1%)
+            atr_period: ATR周期 (default: 14)
             use_parallel: 是否使用并行处理 (default: True)
             use_cache: 是否使用缓存 (default: True)
 
@@ -394,8 +396,8 @@ class CryptoScanner:
         if ma_periods is None:
             ma_periods = [5, 20, 60]
 
-        # 需要更多K线数据来计算均线斜率
-        limit = max(ma_periods) + 20  # 额外数据用于计算斜率
+        # 需要更多K线数据来计算均线斜率和ATR
+        limit = max(ma_periods) + atr_period + 5  # 额外数据用于计算斜率和ATR
 
         try:
             # 获取交易量过滤的币种
@@ -409,11 +411,11 @@ class CryptoScanner:
 
             if use_parallel and len(symbols) > 1:
                 return self._scan_ma_convergence_breakout_parallel(
-                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength
+                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
                 )
             else:
                 return self._scan_ma_convergence_breakout_sequential(
-                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength
+                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
                 )
 
         except Exception as e:
@@ -425,14 +427,15 @@ class CryptoScanner:
     def _scan_ma_convergence_breakout_sequential(self, symbols: list, ma_periods: list,
                                                 bar: str, limit: int,
                                                 convergence_threshold: float,
-                                                breakout_strength: float) -> list:
+                                                breakout_strength: float,
+                                                atr_period: int) -> list:
         """顺序扫描均线粘合+发散形态"""
         convergence_breakout_coins = []
 
         for symbol in symbols:
             try:
                 result = self._analyze_symbol_ma_convergence_breakout(
-                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength
+                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
                 )
                 if result:
                     convergence_breakout_coins.append(result)
@@ -446,7 +449,8 @@ class CryptoScanner:
     def _scan_ma_convergence_breakout_parallel(self, symbols: list, ma_periods: list,
                                               bar: str, limit: int,
                                               convergence_threshold: float,
-                                              breakout_strength: float) -> list:
+                                              breakout_strength: float,
+                                              atr_period: int = 14) -> list:
         """并行扫描均线粘合+发散形态"""
         convergence_breakout_coins = []
 
@@ -454,7 +458,7 @@ class CryptoScanner:
             future_to_symbol = {
                 executor.submit(
                     self._analyze_symbol_ma_convergence_breakout,
-                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength
+                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
                 ): symbol
                 for symbol in symbols
             }
@@ -474,23 +478,29 @@ class CryptoScanner:
     def _analyze_symbol_ma_convergence_breakout(self, symbol: str, ma_periods: list,
                                                bar: str, limit: int,
                                                convergence_threshold: float,
-                                               breakout_strength: float) -> dict:
+                                               breakout_strength: float,
+                                               atr_period: int = 14) -> dict:
         """
-        分析单个币种的均线粘合+发散形态
+        分析单个币种的均线粘合+发散形态（早期趋势启动型）
 
         判断逻辑：
         1. 均线粘合：所有均线之间的最大距离 < convergence_threshold
         2. 向上发散：MA5 突破 MA20，且 MA20 斜率为正
+        3. ATR波动确认：ATR值上升或高于平均值，确认突破的有效性
         """
         try:
             # 获取K线数据
             df = self.market_data_retriever.get_kline(symbol, bar, limit)
 
-            if df is None or len(df) < max(ma_periods) + 5:  # 需要足够数据计算斜率和粘合
+            if df is None or len(df) < max(ma_periods) + atr_period + 5:  # 需要足够数据计算斜率、粘合和ATR
+                return None
+
+            # 确保有足够数据用于ATR计算
+            if len(df) < atr_period + 5:
                 return None
 
             closes = df['c'] if 'c' in df.columns else df['close']
-            if len(closes) < max(ma_periods) + 5:
+            if len(closes) < max(ma_periods) + atr_period + 5:
                 return None
 
             # 使用 technical_indicators 模块计算均线值
@@ -531,11 +541,26 @@ class CryptoScanner:
             # 3. MA5 突破强度
             ma5_breakout_strength = (current_ma_values[5] - current_ma_values[20]) / current_ma_values[20] if current_ma_values[20] > 0 else 0
 
-            # 判断是否满足粘合+发散条件
+            # 计算ATR值用于波动确认
+            atr_values = atr(df, atr_period)
+            if len(atr_values) < 2:
+                return None
+
+            current_atr = float(atr_values.iloc[-1])
+            prev_atr = float(atr_values.iloc[-2])
+
+            # 计算ATR平均值用于比较
+            avg_atr = float(atr_values.mean())
+
+            # ATR确认条件：ATR上升或高于平均值
+            atr_confirmation = current_atr > prev_atr or current_atr > avg_atr
+
+            # 判断是否满足粘合+发散+ATR确认条件
             if (convergence_ratio <= convergence_threshold and
                 ma5_break_ma20 and
                 ma20_slope > 0 and
-                ma5_breakout_strength >= breakout_strength):
+                ma5_breakout_strength >= breakout_strength and
+                atr_confirmation):
 
                 return {
                     'symbol': symbol,
@@ -544,6 +569,8 @@ class CryptoScanner:
                     'ma5_breakout_strength': ma5_breakout_strength * 100,
                     'ma20_slope': ma20_slope * 100,
                     'breakout_strength': ma5_breakout_strength * 100,  # 综合突破强度
+                    'atr_value': current_atr,
+                    'atr_confirmation': atr_confirmation,
                     'ma_values': current_ma_values
                 }
 
@@ -947,6 +974,190 @@ class CryptoScanner:
 
         return None
 
+    def scan_slope_acceleration(self, currency: str = 'USDT', ma_periods: list = None,
+                               bar: str = '5m', min_vol_ccy: float = 1000000,
+                               use_parallel: bool = True, use_cache: bool = True,
+                               rsi_filter_enabled: bool = True) -> list:
+        """
+        扫描均线斜率加速形态（趋势刚开始加速）
+
+        检测MA5的斜率大于0，且MA5斜率 > MA20斜率
+        代表趋势刚开始加速，而非已经走平
+
+        Args:
+            currency: 交易对货币 (default: USDT)
+            ma_periods: 均线周期列表 (default: [5, 20])
+            bar: K线时间间隔 (default: 5m)
+            min_vol_ccy: 最小24小时交易量 (default: 1,000,000)
+            use_parallel: 是否使用并行处理 (default: True)
+            use_cache: 是否使用缓存 (default: True)
+            rsi_filter_enabled: 是否启用RSI过滤 (default: True)
+
+        Returns:
+            均线斜率加速形态的币种列表
+        """
+        if ma_periods is None:
+            ma_periods = [5, 20]
+
+        # 需要足够数据来计算斜率
+        limit = max(ma_periods) + 10
+
+        try:
+            # 获取交易量过滤的币种
+            symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
+
+            if not symbols:
+                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                return []
+
+            print(f"Scanning {len(symbols)} symbols for slope acceleration patterns")
+
+            if use_parallel and len(symbols) > 1:
+                return self._scan_slope_acceleration_parallel(symbols, ma_periods, bar, limit, rsi_filter_enabled)
+            else:
+                return self._scan_slope_acceleration_sequential(symbols, ma_periods, bar, limit, rsi_filter_enabled)
+
+        except Exception as e:
+            print(f"Error scanning slope acceleration: {e}")
+            print("This may be due to network connectivity issues or API restrictions.")
+            print("Please check your internet connection and firewall settings.")
+            return []
+
+    def _scan_slope_acceleration_sequential(self, symbols: list, ma_periods: list,
+                                          bar: str, limit: int, rsi_filter_enabled: bool = True) -> list:
+        """顺序扫描均线斜率加速形态"""
+        slope_acceleration_coins = []
+
+        for symbol in symbols:
+            try:
+                result = self._analyze_symbol_slope_acceleration(symbol, ma_periods, bar, limit, rsi_filter_enabled)
+                if result:
+                    slope_acceleration_coins.append(result)
+            except Exception:
+                continue
+
+        # 按加速强度排序
+        slope_acceleration_coins.sort(key=lambda x: x['acceleration_strength'], reverse=True)
+        return slope_acceleration_coins
+
+    def _scan_slope_acceleration_parallel(self, symbols: list, ma_periods: list,
+                                        bar: str, limit: int, rsi_filter_enabled: bool = True) -> list:
+        """并行扫描均线斜率加速形态"""
+        slope_acceleration_coins = []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(symbols))) as executor:
+            future_to_symbol = {
+                executor.submit(self._analyze_symbol_slope_acceleration, symbol, ma_periods, bar, limit, rsi_filter_enabled): symbol
+                for symbol in symbols
+            }
+
+            for future in concurrent.futures.as_completed(future_to_symbol):
+                try:
+                    result = future.result()
+                    if result:
+                        slope_acceleration_coins.append(result)
+                except Exception:
+                    continue
+
+        # 按加速强度排序
+        slope_acceleration_coins.sort(key=lambda x: x['acceleration_strength'], reverse=True)
+        return slope_acceleration_coins
+
+    def _analyze_symbol_slope_acceleration(self, symbol: str, ma_periods: list,
+                                         bar: str, limit: int, rsi_filter_enabled: bool = True) -> dict:
+        """
+        分析单个币种的趋势启动早期加速形态
+
+        判断逻辑：
+        1. 最近5根K线的MA5均线呈加速上升（斜率连续增加）
+        2. MA20仍然接近水平（代表主趋势尚未完全展开）
+        3. 最近一根K线的收盘价 > MA5
+        4. 可选过滤：RSI > 45且 < 65（防止追高，保证动能刚起）
+        """
+        try:
+            # 获取K线数据
+            df = self.market_data_retriever.get_kline(symbol, bar, limit)
+
+            if df is None or len(df) < max(ma_periods) + 10:  # 需要更多数据计算RSI
+                return None
+
+            closes = df['c'] if 'c' in df.columns else df['close']
+            if len(closes) < max(ma_periods) + 10:
+                return None
+
+            # 计算均线值
+            ma_values = {}
+            for p in ma_periods:
+                if len(closes) >= p:
+                    # 使用 SMA 计算均线
+                    ma_series = sma(closes, p)
+                    ma_values[p] = ma_series
+
+            if len(ma_values) < len(ma_periods):
+                return None
+
+            # 确保有足够的数据计算斜率和加速度
+            if len(ma_values[5]) < 5 or len(ma_values[20]) < 5:
+                return None
+
+            # 计算MA5的斜率序列（使用3周期斜率）
+            ma5_slope_series = slope(ma_values[5], 3)
+
+            # 确保有足够的斜率数据
+            if len(ma5_slope_series.dropna()) < 3:
+                return None
+
+            # 计算加速度 = 当前斜率 - 前一周期斜率
+            current_slope = ma5_slope_series.iloc[-1] if not pd.isna(ma5_slope_series.iloc[-1]) else 0
+            previous_slope = ma5_slope_series.iloc[-2] if not pd.isna(ma5_slope_series.iloc[-2]) else 0
+            acceleration = current_slope - previous_slope
+
+            # 计算MA20当前斜率
+            ma20_slope_now = slope(ma_values[20], 3).iloc[-1] if not pd.isna(slope(ma_values[20], 3).iloc[-1]) else 0
+
+            # 计算RSI指标
+            rsi_values = rsi(closes, 14)
+            current_rsi = rsi_values.iloc[-1] if not pd.isna(rsi_values.iloc[-1]) else 50
+
+            # 检查趋势启动早期加速条件
+            # 1. MA5呈加速上升（加速度 > 0）
+            ma5_accelerating = acceleration > 0
+
+            # 2. MA5斜率当前为正（趋势向上）
+            ma5_slope_positive = current_slope > 0
+
+            # 3. MA20仍然接近水平（主趋势尚未完全展开）
+            ma20_near_horizontal = abs(ma20_slope_now) < 0.02
+
+            # 4. 最近一根K线的收盘价 > MA5（价格在均线上方）
+            price_above_ma5 = closes.iloc[-1] > ma_values[5].iloc[-1]
+
+            # 5. RSI在合理区间（防止追高，保证动能刚起）- 可选过滤
+            rsi_in_range = 45 < current_rsi < 65
+
+            # 综合判断
+            # 基本条件：MA5加速、MA5斜率为正、MA20接近水平、价格在MA5上方
+            basic_conditions = (ma5_accelerating and ma5_slope_positive and
+                              ma20_near_horizontal and price_above_ma5)
+
+            # 使用传递进来的RSI过滤参数
+            if basic_conditions and (rsi_in_range or not rsi_filter_enabled):
+                return {
+                    'symbol': symbol,
+                    'current_price': float(closes.iloc[-1]),
+                    'acceleration_strength': acceleration,
+                    'ma5_slope': current_slope,
+                    'ma20_slope': ma20_slope_now,
+                    'rsi': current_rsi,
+                    'ma5_value': float(ma_values[5].iloc[-1]),
+                    'ma20_value': float(ma_values[20].iloc[-1])
+                }
+
+        except Exception as e:
+            return None
+
+        return None
+
     def generate_market_report(self) -> dict:
         """
         Generate a comprehensive market report
@@ -961,6 +1172,7 @@ class CryptoScanner:
             'ma_convergence_breakout_coins': self.scan_ma_convergence_breakout(min_vol_ccy=100000),  # Add MA convergence breakout coins
             'momentum_early_coins': self.scan_momentum_early(min_vol_ccy=100000),  # Add momentum early coins
             'volume_breakout_coins': self.scan_volume_breakout(min_vol_ccy=100000),  # Add volume breakout coins
+            'slope_acceleration_coins': self.scan_slope_acceleration(min_vol_ccy=100000, rsi_filter_enabled=True),  # Add slope acceleration coins
             'volatility_data': [],
             'liquidity_data': []
         }
@@ -1074,6 +1286,18 @@ def main():
                   f"Breakout: {coin['price_breakout_ratio']:>5.2f}%")
     else:
         print("\nNo volume breakout coins found with current criteria.")
+
+    # Display slope acceleration coins
+    if report['slope_acceleration_coins']:
+        print("\nSlope Acceleration Coins (Trend Just Starting to Accelerate):")
+        print("-" * 50)
+        for coin in report['slope_acceleration_coins'][:10]:  # Show top 10 slope acceleration coins
+            print(f"{coin['symbol']:12s} | "
+                  f"Price: ${coin['current_price']:>10.2f} | "
+                  f"Acceleration: {coin['acceleration_strength']:>7.4f} | "
+                  f"RSI: {coin['rsi']:>5.1f}")
+    else:
+        print("\nNo slope acceleration coins found with current criteria.")
 
     if report['volatility_data']:
         print("\nVolatility Analysis (Top 5 coins):")

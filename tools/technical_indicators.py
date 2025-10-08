@@ -315,6 +315,73 @@ def bollinger_bands(data: Union[pd.Series, pd.DataFrame],
     return upper_band, middle_band, lower_band
 
 
+def slope(data: Union[pd.Series, pd.DataFrame], period: int = 2) -> pd.Series:
+    """
+    Calculate the slope of a series or DataFrame column
+
+    Formula: Slope = (Y2 - Y1) / (X2 - X1)
+    For time series data, we use the difference in values over a given period
+
+    Args:
+        data (pd.Series or pd.DataFrame): Price data or indicator data
+                 For DataFrame, expects 'close' column from OKX API kline data
+        period (int): Number of periods to calculate slope over (default: 2)
+
+    Returns:
+        pd.Series: Slope values
+    """
+    if isinstance(data, pd.DataFrame):
+        # Handle OKX API DataFrame structure
+        if 'close' not in data.columns:
+            raise ValueError("DataFrame must contain 'close' column from OKX API kline data")
+        data = data['close']
+
+    # Calculate slope as the difference over the period
+    # This gives us the rate of change
+    slope_values = data.diff(period)
+
+    return slope_values
+
+
+def atr(data: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    Average True Range (ATR) - A measure of market volatility
+
+    Formula:
+    - TR = max(High - Low, |High - PrevClose|, |Low - PrevClose|)
+    - ATR = MA(TR, period)
+
+    Args:
+        data (pd.DataFrame): OKX API kline DataFrame with 'high', 'low', 'close' columns
+        period (int): Number of periods for ATR calculation (default: 14)
+
+    Returns:
+        pd.Series: ATR values
+    """
+    # Validate OKX API DataFrame structure
+    required_columns = ['high', 'low', 'close']
+    if not all(col in data.columns for col in required_columns):
+        raise ValueError(f"DataFrame must contain {required_columns} columns from OKX API kline data")
+
+    # Calculate True Range (TR)
+    high = data['high']
+    low = data['low']
+    close = data['close']
+
+    # TR = max(High - Low, |High - PrevClose|, |Low - PrevClose|)
+    tr1 = high - low
+    tr2 = abs(high - close.shift(1))
+    tr3 = abs(low - close.shift(1))
+
+    # Element-wise maximum of the three TR components
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    # Calculate ATR as moving average of TR
+    atr_values = sma(tr, period)
+
+    return atr_values
+
+
 # Convenience aliases
 ma = sma  # Default MA is SMA
 
