@@ -646,24 +646,80 @@ class CryptoScanner:
             'take_profit': take_profit
         }
 
-    def calculate_trailing_stop(self, current_price: float, atr_value: float,
-                               initial_stop_loss: float, trailing_stop_multiplier: float = 1.5) -> float:
+    def calculate_trailing_stop(self, instId: str,
+                               stop_loss_multiplier: float = 1.5,
+                               take_profit_multiplier: float = 3.0,
+                               atr_period: int = 14,
+                               bar: str = '15m') -> dict:
         """
-        计算移动止损价格
+        计算移动止损止盈价格，自动从OKX API获取行情数据并计算ATR值
 
-        移动止盈：SLtrailing = max(SLinitial, Pcurrent - 1.5 × ATR)
+        公式：
+        - 移动止损：SL_trailing = max(SL_initial, P_current - stop_loss_multiplier × ATR)
+        - 止盈：TP = P_buy + take_profit_multiplier × ATR
 
         Args:
-            current_price: 当前价格
-            atr_value: ATR值
-            initial_stop_loss: 初始止损价
-            trailing_stop_multiplier: 移动止损倍数 (default: 1.5)
+            instId: 交易对ID (e.g., 'BTC-USDT')
+            stop_loss_multiplier: 止损倍数 (default: 1.5)
+            take_profit_multiplier: 止盈倍数 (default: 3.0)
+            atr_period: ATR计算周期 (default: 14)
+            bar: K线时间间隔 (default: '15m')
 
         Returns:
-            float: 移动止损价格
+            dict: 包含买入价格、止损价、止盈价和ATR值的字典
         """
-        trailing_stop = current_price - trailing_stop_multiplier * atr_value
-        return max(initial_stop_loss, trailing_stop)
+        try:
+            # 从OKX API获取当前价格
+            ticker = self.market_data_retriever.get_ticker_by_symbol(instId)
+            if ticker is None:
+                return None
+
+            current_price = float(ticker.last) if ticker.last else 0
+            if current_price <= 0:
+                return None
+
+            # 获取K线数据用于计算ATR
+            limit = atr_period + 10  # 需要足够数据计算ATR
+            df = self.market_data_retriever.get_kline(instId, bar, limit)
+
+            if df is None or len(df) < atr_period:
+                return None
+
+            # 计算ATR值
+            atr_values = atr(df, atr_period)
+            if len(atr_values) == 0 or pd.isna(atr_values.iloc[-1]):
+                return None
+
+            current_atr = float(atr_values.iloc[-1])
+
+            # 使用当前价格作为买入价格（实际应用中可能需要用户输入）
+            buy_price = current_price
+
+            # 计算初始止损
+            initial_stop_loss = buy_price - stop_loss_multiplier * current_atr
+
+            # 计算移动止损
+            trailing_stop = current_price - stop_loss_multiplier * current_atr
+            trailing_stop_price = max(initial_stop_loss, trailing_stop)
+
+            # 计算止盈
+            take_profit = buy_price + take_profit_multiplier * current_atr
+
+            return {
+                'instId': instId,
+                'buy_price': buy_price,
+                'current_price': current_price,
+                'atr_value': current_atr,
+                'initial_stop_loss': initial_stop_loss,
+                'trailing_stop_price': trailing_stop_price,
+                'take_profit': take_profit,
+                'stop_loss_multiplier': stop_loss_multiplier,
+                'take_profit_multiplier': take_profit_multiplier
+            }
+
+        except Exception as e:
+            print(f"Error calculating trailing stop for {instId}: {e}")
+            return None
 
     def scan_momentum_early(self, currency: str = 'USDT', bar: str = '5m',
                            min_vol_ccy: float = 1000000, rsi_low_threshold: float = 30,
