@@ -370,7 +370,6 @@ class CryptoScanner:
                                     bar: str = '15m', min_vol_ccy: float = 1000000,
                                     convergence_threshold: float = 0.02,
                                     breakout_strength: float = 0.01,
-                                    atr_period: int = 14,
                                     use_parallel: bool = True,
                                     use_cache: bool = True) -> list:
         """
@@ -385,8 +384,7 @@ class CryptoScanner:
             bar: K线时间间隔 (default: 15m)
             min_vol_ccy: 最小24小时交易量 (default: 1,000,000)
             convergence_threshold: 均线粘合阈值 (default: 2%)
-            breakout_strength: 突破强度阈值 (default: 1%)
-            atr_period: ATR周期 (default: 14)
+            breakout_strength: 突破强度阈值 (default: 1%）
             use_parallel: 是否使用并行处理 (default: True)
             use_cache: 是否使用缓存 (default: True)
 
@@ -396,8 +394,8 @@ class CryptoScanner:
         if ma_periods is None:
             ma_periods = [5, 20, 60]
 
-        # 需要更多K线数据来计算均线斜率和ATR
-        limit = max(ma_periods) + atr_period + 5  # 额外数据用于计算斜率和ATR
+        # 需要更多K线数据来计算均线斜率
+        limit = max(ma_periods) + 2  # 额外数据用于计算斜率
 
         try:
             # 获取交易量过滤的币种
@@ -411,11 +409,11 @@ class CryptoScanner:
 
             if use_parallel and len(symbols) > 1:
                 return self._scan_ma_convergence_breakout_parallel(
-                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
+                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength
                 )
             else:
                 return self._scan_ma_convergence_breakout_sequential(
-                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
+                    symbols, ma_periods, bar, limit, convergence_threshold, breakout_strength
                 )
 
         except Exception as e:
@@ -427,15 +425,14 @@ class CryptoScanner:
     def _scan_ma_convergence_breakout_sequential(self, symbols: list, ma_periods: list,
                                                 bar: str, limit: int,
                                                 convergence_threshold: float,
-                                                breakout_strength: float,
-                                                atr_period: int) -> list:
+                                                breakout_strength: float) -> list:
         """顺序扫描均线粘合+发散形态"""
         convergence_breakout_coins = []
 
         for symbol in symbols:
             try:
                 result = self._analyze_symbol_ma_convergence_breakout(
-                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
+                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength
                 )
                 if result:
                     convergence_breakout_coins.append(result)
@@ -449,8 +446,7 @@ class CryptoScanner:
     def _scan_ma_convergence_breakout_parallel(self, symbols: list, ma_periods: list,
                                               bar: str, limit: int,
                                               convergence_threshold: float,
-                                              breakout_strength: float,
-                                              atr_period: int = 14) -> list:
+                                              breakout_strength: float) -> list:
         """并行扫描均线粘合+发散形态"""
         convergence_breakout_coins = []
 
@@ -458,7 +454,7 @@ class CryptoScanner:
             future_to_symbol = {
                 executor.submit(
                     self._analyze_symbol_ma_convergence_breakout,
-                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength, atr_period
+                    symbol, ma_periods, bar, limit, convergence_threshold, breakout_strength
                 ): symbol
                 for symbol in symbols
             }
@@ -478,42 +474,23 @@ class CryptoScanner:
     def _analyze_symbol_ma_convergence_breakout(self, symbol: str, ma_periods: list,
                                                bar: str, limit: int,
                                                convergence_threshold: float,
-                                               breakout_strength: float,
-                                               atr_period: int = 14) -> dict:
+                                               breakout_strength: float) -> dict:
         """
-        分析单个币种的均线粘合+发散形态（早期趋势启动型）
+        分析单个币种的均线粘合+发散形态
 
-        选股条件（完全量化）：
-        1. 均线收敛：MA5、MA20、MA60的当前值最大差 ≤ 2%
-        2. 突破方向确认：MA5 > MA20，MA20 斜率 > 0.1%
-        3. 成交量确认：当前K线成交量 ≥ 最近10根K线成交量平均值 × 1.2
-        4. ATR确认：ATR14 当前值 ≥ ATR14过去14根K线的均值
-        5. 趋势延续过滤：过去5根K线中至少3根为阳线
-
-        买入点：满足条件的当前K线收盘价突破后，下一根K线的开盘价作为买入点
-
-        止损止盈：
-        - 止损 = 买入价 - 1.5 × ATR14
-        - 止盈 = 买入价 + 3 × ATR14
+        判断逻辑：
+        1. 均线粘合：所有均线之间的最大距离 < convergence_threshold
+        2. 向上发散：MA5 突破 MA20，且 MA20 斜率为正
         """
         try:
             # 获取K线数据
             df = self.market_data_retriever.get_kline(symbol, bar, limit)
 
-            if df is None or len(df) < max(ma_periods) + atr_period + 10:  # 需要足够数据计算所有指标
-                return None
-
-            # 确保有足够数据用于所有计算
-            if len(df) < atr_period + 10:
+            if df is None or len(df) < max(ma_periods) + 5:  # 需要足够数据计算斜率和粘合
                 return None
 
             closes = df['c'] if 'c' in df.columns else df['close']
-            opens = df['o'] if 'o' in df.columns else None
-            highs = df['h'] if 'h' in df.columns else None
-            lows = df['l'] if 'l' in df.columns else None
-            volumes = df['vol'] if 'vol' in df.columns else df['volume']
-
-            if len(closes) < max(ma_periods) + atr_period + 10:
+            if len(closes) < max(ma_periods) + 5:
                 return None
 
             # 使用 technical_indicators 模块计算均线值
@@ -537,85 +514,37 @@ class CryptoScanner:
             if len(prev_ma_values) < len(ma_periods):
                 return None
 
-            # 选股条件1: 均线收敛（MA5、MA20、MA60的当前值最大差 ≤ 2%）
-            if not all(p in current_ma_values for p in [5, 20, 60]):
-                return None
-
-            ma_values_list = [current_ma_values[5], current_ma_values[20], current_ma_values[60]]
+            # 检查均线粘合：所有均线之间的最大距离是否小于阈值
+            ma_values_list = list(current_ma_values.values())
             max_ma = max(ma_values_list)
             min_ma = min(ma_values_list)
-            convergence_ratio = (max_ma - min_ma) / min_ma if min_ma > 0 else float('inf')
-            meets_convergence = convergence_ratio <= convergence_threshold
 
-            # 选股条件2: 突破方向确认
-            # MA5 > MA20（当前K线收盘价突破）
+            convergence_ratio = (max_ma - min_ma) / min_ma if min_ma > 0 else float('inf')
+
+            # 检查向上发散条件
+            # 1. MA5 > MA20 (突破)
             ma5_break_ma20 = current_ma_values[5] > current_ma_values[20]
 
-            # MA20 斜率 > 0.1%（5根K线前MA20与当前MA20差值 / MA20_current ≥ 0.001）
+            # 2. MA20 斜率为正
             ma20_slope = (current_ma_values[20] - prev_ma_values[20]) / prev_ma_values[20] if prev_ma_values[20] > 0 else 0
-            meets_slope = ma20_slope >= 0.001
 
-            # MA5 突破强度
+            # 3. MA5 突破强度
             ma5_breakout_strength = (current_ma_values[5] - current_ma_values[20]) / current_ma_values[20] if current_ma_values[20] > 0 else 0
 
-            # 选股条件3: 成交量确认（当前K线成交量 ≥ 最近10根K线成交量平均值 × 1.2）
-            volume_confirmation = False
-            if len(volumes) >= 10:
-                recent_volumes = volumes.iloc[-10:-1]  # 最近10根K线（排除当前K线）
-                if len(recent_volumes) >= 9:
-                    avg_recent_volume = recent_volumes.mean()
-                    current_volume = volumes.iloc[-1]  # 当前K线成交量
-                    volume_confirmation = current_volume >= avg_recent_volume * 1.2
-
-            # 选股条件4: ATR确认（ATR14 当前值 ≥ ATR14过去14根K线的均值）
-            atr_values = atr(df, atr_period)
-            if len(atr_values) < atr_period + 1:
-                return None
-
-            current_atr = float(atr_values.iloc[-1])
-            # 计算过去14根K线的ATR均值
-            past_atr_values = atr_values.iloc[-(atr_period + 1):-1]  # 过去14根K线（排除当前）
-            avg_past_atr = float(past_atr_values.mean()) if len(past_atr_values) > 0 else 0
-            atr_confirmation = current_atr >= avg_past_atr
-
-            # 选股条件5: 趋势延续过滤（过去5根K线中至少3根为阳线）
-            trend_confirmation = False
-            if opens is not None and len(closes) >= 5 and len(opens) >= 5:
-                # 检查过去5根K线中有多少根是阳线（收盘价 > 开盘价）
-                positive_candles = 0
-                for i in range(1, 6):  # 检查倒数第1到第5根K线
-                    if closes.iloc[-i] > opens.iloc[-i]:
-                        positive_candles += 1
-                trend_confirmation = positive_candles >= 3
-
-            # 判断是否满足所有选股条件
-            if (meets_convergence and
+            # 判断是否满足粘合+发散条件
+            if (convergence_ratio <= convergence_threshold and
                 ma5_break_ma20 and
-                meets_slope and
-                ma5_breakout_strength >= breakout_strength and
-                volume_confirmation and
-                atr_confirmation and
-                trend_confirmation):
-
-                # 买入点：下一根K线的开盘价（这里用当前K线的收盘价作为近似）
-                buy_price = float(closes.iloc[-1])
-
-                # 计算止盈止损
-                stop_loss = buy_price - 1.5 * current_atr
-                take_profit = buy_price + 3 * current_atr
+                ma20_slope > 0 and
+                ma5_breakout_strength >= breakout_strength):
 
                 return {
                     'symbol': symbol,
-                    'current_price': buy_price,
-                    'buy_price': buy_price,
-                    'stop_loss': stop_loss,
-                    'take_profit': take_profit,
+                    'current_price': float(closes.iloc[-1]),
                     'convergence_ratio': convergence_ratio * 100,  # 转换为百分比
-                    'ma_breakout_strength': ma5_breakout_strength * 100,
-                    'atr_value': current_atr,
-                    'volume_confirmation': volume_confirmation,
-                    'trend_confirmation': trend_confirmation,
-                    'ma20_slope': ma20_slope * 100
+                    'ma5_breakout_strength': ma5_breakout_strength * 100,
+                    'ma20_slope': ma20_slope * 100,
+                    'breakout_strength': ma5_breakout_strength * 100,  # 综合突破强度
+                    'ma_values': current_ma_values
                 }
 
         except Exception as e:
