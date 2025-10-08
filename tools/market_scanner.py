@@ -483,24 +483,37 @@ class CryptoScanner:
         """
         分析单个币种的均线粘合+发散形态（早期趋势启动型）
 
-        判断逻辑：
-        1. 均线粘合：所有均线之间的最大距离 < convergence_threshold
-        2. 向上发散：MA5 突破 MA20，且 MA20 斜率为正
-        3. ATR波动确认：ATR值上升或高于平均值，确认突破的有效性
+        选股条件（完全量化）：
+        1. 均线收敛：MA5、MA20、MA60的当前值最大差 ≤ 2%
+        2. 突破方向确认：MA5 > MA20，MA20 斜率 > 0.1%
+        3. 成交量确认：当前K线成交量 ≥ 最近10根K线成交量平均值 × 1.2
+        4. ATR确认：ATR14 当前值 ≥ ATR14过去14根K线的均值
+        5. 趋势延续过滤：过去5根K线中至少3根为阳线
+
+        买入点：满足条件的当前K线收盘价突破后，下一根K线的开盘价作为买入点
+
+        止损止盈：
+        - 止损 = 买入价 - 1.5 × ATR14
+        - 止盈 = 买入价 + 3 × ATR14
         """
         try:
             # 获取K线数据
             df = self.market_data_retriever.get_kline(symbol, bar, limit)
 
-            if df is None or len(df) < max(ma_periods) + atr_period + 5:  # 需要足够数据计算斜率、粘合和ATR
+            if df is None or len(df) < max(ma_periods) + atr_period + 10:  # 需要足够数据计算所有指标
                 return None
 
-            # 确保有足够数据用于ATR计算
-            if len(df) < atr_period + 5:
+            # 确保有足够数据用于所有计算
+            if len(df) < atr_period + 10:
                 return None
 
             closes = df['c'] if 'c' in df.columns else df['close']
-            if len(closes) < max(ma_periods) + atr_period + 5:
+            opens = df['o'] if 'o' in df.columns else None
+            highs = df['h'] if 'h' in df.columns else None
+            lows = df['l'] if 'l' in df.columns else None
+            volumes = df['vol'] if 'vol' in df.columns else df['volume']
+
+            if len(closes) < max(ma_periods) + atr_period + 10:
                 return None
 
             # 使用 technical_indicators 模块计算均线值
@@ -524,60 +537,133 @@ class CryptoScanner:
             if len(prev_ma_values) < len(ma_periods):
                 return None
 
-            # 检查均线粘合：所有均线之间的最大距离是否小于阈值
-            ma_values_list = list(current_ma_values.values())
+            # 选股条件1: 均线收敛（MA5、MA20、MA60的当前值最大差 ≤ 2%）
+            if not all(p in current_ma_values for p in [5, 20, 60]):
+                return None
+
+            ma_values_list = [current_ma_values[5], current_ma_values[20], current_ma_values[60]]
             max_ma = max(ma_values_list)
             min_ma = min(ma_values_list)
-
             convergence_ratio = (max_ma - min_ma) / min_ma if min_ma > 0 else float('inf')
+            meets_convergence = convergence_ratio <= convergence_threshold
 
-            # 检查向上发散条件
-            # 1. MA5 > MA20 (突破)
+            # 选股条件2: 突破方向确认
+            # MA5 > MA20（当前K线收盘价突破）
             ma5_break_ma20 = current_ma_values[5] > current_ma_values[20]
 
-            # 2. MA20 斜率为正
+            # MA20 斜率 > 0.1%（5根K线前MA20与当前MA20差值 / MA20_current ≥ 0.001）
             ma20_slope = (current_ma_values[20] - prev_ma_values[20]) / prev_ma_values[20] if prev_ma_values[20] > 0 else 0
+            meets_slope = ma20_slope >= 0.001
 
-            # 3. MA5 突破强度
+            # MA5 突破强度
             ma5_breakout_strength = (current_ma_values[5] - current_ma_values[20]) / current_ma_values[20] if current_ma_values[20] > 0 else 0
 
-            # 计算ATR值用于波动确认
+            # 选股条件3: 成交量确认（当前K线成交量 ≥ 最近10根K线成交量平均值 × 1.2）
+            volume_confirmation = False
+            if len(volumes) >= 10:
+                recent_volumes = volumes.iloc[-10:-1]  # 最近10根K线（排除当前K线）
+                if len(recent_volumes) >= 9:
+                    avg_recent_volume = recent_volumes.mean()
+                    current_volume = volumes.iloc[-1]  # 当前K线成交量
+                    volume_confirmation = current_volume >= avg_recent_volume * 1.2
+
+            # 选股条件4: ATR确认（ATR14 当前值 ≥ ATR14过去14根K线的均值）
             atr_values = atr(df, atr_period)
-            if len(atr_values) < 2:
+            if len(atr_values) < atr_period + 1:
                 return None
 
             current_atr = float(atr_values.iloc[-1])
-            prev_atr = float(atr_values.iloc[-2])
+            # 计算过去14根K线的ATR均值
+            past_atr_values = atr_values.iloc[-(atr_period + 1):-1]  # 过去14根K线（排除当前）
+            avg_past_atr = float(past_atr_values.mean()) if len(past_atr_values) > 0 else 0
+            atr_confirmation = current_atr >= avg_past_atr
 
-            # 计算ATR平均值用于比较
-            avg_atr = float(atr_values.mean())
+            # 选股条件5: 趋势延续过滤（过去5根K线中至少3根为阳线）
+            trend_confirmation = False
+            if opens is not None and len(closes) >= 5 and len(opens) >= 5:
+                # 检查过去5根K线中有多少根是阳线（收盘价 > 开盘价）
+                positive_candles = 0
+                for i in range(1, 6):  # 检查倒数第1到第5根K线
+                    if closes.iloc[-i] > opens.iloc[-i]:
+                        positive_candles += 1
+                trend_confirmation = positive_candles >= 3
 
-            # ATR确认条件：ATR上升或高于平均值
-            atr_confirmation = current_atr > prev_atr or current_atr > avg_atr
-
-            # 判断是否满足粘合+发散+ATR确认条件
-            if (convergence_ratio <= convergence_threshold and
+            # 判断是否满足所有选股条件
+            if (meets_convergence and
                 ma5_break_ma20 and
-                ma20_slope > 0 and
+                meets_slope and
                 ma5_breakout_strength >= breakout_strength and
-                atr_confirmation):
+                volume_confirmation and
+                atr_confirmation and
+                trend_confirmation):
+
+                # 买入点：下一根K线的开盘价（这里用当前K线的收盘价作为近似）
+                buy_price = float(closes.iloc[-1])
+
+                # 计算止盈止损
+                stop_loss = buy_price - 1.5 * current_atr
+                take_profit = buy_price + 3 * current_atr
 
                 return {
                     'symbol': symbol,
-                    'current_price': float(closes.iloc[-1]),
+                    'current_price': buy_price,
+                    'buy_price': buy_price,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
                     'convergence_ratio': convergence_ratio * 100,  # 转换为百分比
-                    'ma5_breakout_strength': ma5_breakout_strength * 100,
-                    'ma20_slope': ma20_slope * 100,
-                    'breakout_strength': ma5_breakout_strength * 100,  # 综合突破强度
+                    'ma_breakout_strength': ma5_breakout_strength * 100,
                     'atr_value': current_atr,
-                    'atr_confirmation': atr_confirmation,
-                    'ma_values': current_ma_values
+                    'volume_confirmation': volume_confirmation,
+                    'trend_confirmation': trend_confirmation,
+                    'ma20_slope': ma20_slope * 100
                 }
 
         except Exception as e:
             return None
 
         return None
+
+    def calculate_stop_loss_take_profit(self, buy_price: float, atr_value: float,
+                                      stop_loss_multiplier: float = 1.5,
+                                      take_profit_multiplier: float = 3.0) -> dict:
+        """
+        计算止盈和止损价格
+
+        Args:
+            buy_price: 买入价格
+            atr_value: ATR值
+            stop_loss_multiplier: 止损倍数 (default: 1.5)
+            take_profit_multiplier: 止盈倍数 (default: 3.0)
+
+        Returns:
+            dict: 包含止损价和止盈价的字典
+        """
+        stop_loss = buy_price - stop_loss_multiplier * atr_value
+        take_profit = buy_price + take_profit_multiplier * atr_value
+
+        return {
+            'stop_loss': stop_loss,
+            'take_profit': take_profit
+        }
+
+    def calculate_trailing_stop(self, current_price: float, atr_value: float,
+                               initial_stop_loss: float, trailing_stop_multiplier: float = 1.5) -> float:
+        """
+        计算移动止损价格
+
+        移动止盈：SLtrailing = max(SLinitial, Pcurrent - 1.5 × ATR)
+
+        Args:
+            current_price: 当前价格
+            atr_value: ATR值
+            initial_stop_loss: 初始止损价
+            trailing_stop_multiplier: 移动止损倍数 (default: 1.5)
+
+        Returns:
+            float: 移动止损价格
+        """
+        trailing_stop = current_price - trailing_stop_multiplier * atr_value
+        return max(initial_stop_loss, trailing_stop)
 
     def scan_momentum_early(self, currency: str = 'USDT', bar: str = '5m',
                            min_vol_ccy: float = 1000000, rsi_low_threshold: float = 30,
