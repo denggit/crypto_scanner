@@ -85,67 +85,52 @@ class EMACrossoverStrategy:
             current_ema_long = ema_long.iloc[-1]
             prev_ema_long = ema_long.iloc[-2]
             
-            # 计算EMA20斜率（使用快速斜率和慢速斜率的组合作为爆发感应器）
-            if len(ema_long) >= 5:
-                # 快速反应（最近两根K）
-                ema20_slope_fast = (ema_long.iloc[-1] - ema_long.iloc[-2]) / ema_long.iloc[-2] if ema_long.iloc[-2] != 0 else 0
-                # 稳定趋势（最近五根K）
-                ema20_slope_slow = (ema_long.iloc[-1] - ema_long.iloc[-5]) / (5 * ema_long.iloc[-5]) if ema_long.iloc[-5] != 0 else 0
-                # 组合判断逻辑，稍偏重趋势平滑的权重
-                ema20_slope = (ema20_slope_fast + ema20_slope_slow * 2) / 3
-            else:
-                ema20_slope = (current_ema_long - prev_ema_long) / prev_ema_long if prev_ema_long != 0 else 0
+            # 计算EMA20斜率（直接使用最近两根K线的斜率）
+            ema20_slope = (current_ema_long - prev_ema_long) / prev_ema_long if prev_ema_long != 0 else 0
             
-            # 计算成交量条件（根据周期选择不同的成交量判断方法）
+            # 计算成交量条件（使用近期最高成交量作为基准）
             current_volume = volumes.iloc[-1]
             volume_ratio = 0  # 初始化volume_ratio
+            
+            # 根据周期确定近期成交量窗口大小
+            if bar in ['1m', '3m', '5m']:
+                vol_window = 10  # 小周期使用10根K线
+            else:
+                vol_window = 7   # 大周期使用7根K线
             
             # 根据模式选择成交量判断方式
             if mode == 'loose' and len(volumes) >= 2:
                 # loose模式：允许前一根K线放量
                 prev_volume = volumes.iloc[-2]
-                if len(volumes) >= 11:  # 需要足够的数据来计算前一根的EMA或平均成交量
-                    # 对于小周期（1m~5m），使用EMA成交量
-                    if bar in ['1m', '3m', '5m']:
-                        vol_ema = volumes.ewm(span=10).mean()
-                        current_volume_ratio = current_volume / vol_ema.iloc[-1] if vol_ema.iloc[-1] != 0 else 0
-                        prev_volume_ratio = prev_volume / vol_ema.iloc[-2] if vol_ema.iloc[-2] != 0 else 0
-                        volume_ratio = max(current_volume_ratio, prev_volume_ratio)
-                        volume_expansion = volume_ratio > vol_multiplier
-                    # 对于大周期（15m+），使用平均成交量
-                    elif bar in ['15m', '30m', '1H', '2H', '4H', '6H', '12H', '1D']:
-                        avg_volume = volumes.iloc[-11:-1].mean()  # 前11根K线的平均成交量（排除最后一根）
-                        current_volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        prev_volume_ratio = prev_volume / avg_volume if avg_volume != 0 else 0
-                        volume_ratio = max(current_volume_ratio, prev_volume_ratio)
-                        volume_expansion = volume_ratio > vol_multiplier
+                if len(volumes) >= vol_window + 2:  # 需要足够的数据来计算近期最高成交量（排除当前和前一根）
+                    # 计算近期最高成交量（排除当前和前一根）
+                    recent_volumes = volumes.iloc[-(vol_window+2):-2]
+                    max_recent_volume = recent_volumes.max()
+                    
+                    # loose模式逻辑：先判断前一根是否放量，如果放量成功则直接判定为放量成功
+                    # 如果前一根没有放量，再判断当前K线是否放量
+                    prev_volume_ratio = prev_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    if prev_volume_ratio > vol_multiplier:
+                        # 前一根放量成功
+                        volume_expansion = True
+                        volume_ratio = prev_volume_ratio
                     else:
-                        # 默认情况使用平均成交量
-                        avg_volume = volumes.iloc[-11:-1].mean()
-                        current_volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        prev_volume_ratio = prev_volume / avg_volume if avg_volume != 0 else 0
-                        volume_ratio = max(current_volume_ratio, prev_volume_ratio)
-                        volume_expansion = volume_ratio > vol_multiplier
+                        # 前一根没有放量，判断当前K线是否放量
+                        current_volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                        volume_expansion = current_volume_ratio > vol_multiplier
+                        volume_ratio = current_volume_ratio
                 else:
                     volume_expansion = True  # 数据不足时默认满足成交量条件
             else:
                 # strict模式：要求当前K线放量（默认模式）
-                if len(volumes) >= 10:
-                    # 对于小周期（1m~5m），使用EMA成交量
-                    if bar in ['1m', '3m', '5m']:
-                        vol_ema = volumes.ewm(span=10).mean()
-                        volume_ratio = current_volume / vol_ema.iloc[-1] if vol_ema.iloc[-1] != 0 else 0
-                        volume_expansion = volume_ratio > vol_multiplier
-                    # 对于大周期（15m+），使用平均成交量
-                    elif bar in ['15m', '30m', '1H', '2H', '4H', '6H', '12H', '1D']:
-                        avg_volume = volumes.iloc[-10:-1].mean()  # 前10根K线的平均成交量（排除最后一根）
-                        volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        volume_expansion = volume_ratio > vol_multiplier
-                    else:
-                        # 默认情况使用平均成交量
-                        avg_volume = volumes.iloc[-10:-1].mean()
-                        volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        volume_expansion = volume_ratio > vol_multiplier
+                if len(volumes) >= vol_window + 1:
+                    # 计算近期最高成交量（排除最后一根）
+                    recent_volumes = volumes.iloc[-(vol_window+1):-1]
+                    max_recent_volume = recent_volumes.max()
+                    
+                    # 计算当前K线的成交量比率
+                    volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    volume_expansion = volume_ratio > vol_multiplier
                 else:
                     volume_expansion = True  # 数据不足时默认满足成交量条件
             
@@ -228,67 +213,52 @@ class EMACrossoverStrategy:
             current_ema_long = ema_long.iloc[-1] if len(ema_long) > 0 else 0
             prev_ema_long = ema_long.iloc[-2] if len(ema_long) > 1 else 0
             
-            # 计算EMA20斜率（使用快速斜率和慢速斜率的组合作为爆发感应器）
-            if len(ema_long) >= 5:
-                # 快速反应（最近两根K）
-                ema20_slope_fast = (ema_long.iloc[-1] - ema_long.iloc[-2]) / ema_long.iloc[-2] if ema_long.iloc[-2] != 0 else 0
-                # 稳定趋势（最近五根K）
-                ema20_slope_slow = (ema_long.iloc[-1] - ema_long.iloc[-5]) / (5 * ema_long.iloc[-5]) if ema_long.iloc[-5] != 0 else 0
-                # 组合判断逻辑，稍偏重趋势平滑的权重
-                ema20_slope = (ema20_slope_fast + ema20_slope_slow * 2) / 3
-            else:
-                ema20_slope = (current_ema_long - prev_ema_long) / prev_ema_long if prev_ema_long != 0 else 0
+            # 计算EMA20斜率（直接使用最近两根K线的斜率）
+            ema20_slope = (current_ema_long - prev_ema_long) / prev_ema_long if prev_ema_long != 0 else 0
             
-            # 计算成交量条件（根据周期选择不同的成交量判断方法）
+            # 计算成交量条件（使用近期最高成交量作为基准）
             current_volume = volumes.iloc[-1] if len(volumes) > 0 else 0
             volume_ratio = 0  # 初始化volume_ratio
+            
+            # 根据周期确定近期成交量窗口大小
+            if bar in ['1m', '3m', '5m']:
+                vol_window = 10  # 小周期使用10根K线
+            else:
+                vol_window = 5   # 大周期使用5根K线
             
             # 根据模式选择成交量判断方式
             if mode == 'loose' and len(volumes) >= 2:
                 # loose模式：允许前一根K线放量
                 prev_volume = volumes.iloc[-2]
-                if len(volumes) >= 11:  # 需要足够的数据来计算前一根的EMA或平均成交量
-                    # 对于小周期（1m~5m），使用EMA成交量
-                    if bar in ['1m', '3m', '5m']:
-                        vol_ema = volumes.ewm(span=10).mean()
-                        current_volume_ratio = current_volume / vol_ema.iloc[-1] if vol_ema.iloc[-1] != 0 else 0
-                        prev_volume_ratio = prev_volume / vol_ema.iloc[-2] if vol_ema.iloc[-2] != 0 else 0
-                        volume_ratio = max(current_volume_ratio, prev_volume_ratio)
-                        volume_expansion = volume_ratio > vol_multiplier
-                    # 对于大周期（15m+），使用平均成交量
-                    elif bar in ['15m', '30m', '1H', '2H', '4H', '6H', '12H', '1D']:
-                        avg_volume = volumes.iloc[-11:-1].mean()  # 前11根K线的平均成交量（排除最后一根）
-                        current_volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        prev_volume_ratio = prev_volume / avg_volume if avg_volume != 0 else 0
-                        volume_ratio = max(current_volume_ratio, prev_volume_ratio)
-                        volume_expansion = volume_ratio > vol_multiplier
+                if len(volumes) >= vol_window + 2:  # 需要足够的数据来计算近期最高成交量（排除当前和前一根）
+                    # 计算近期最高成交量（排除当前和前一根）
+                    recent_volumes = volumes.iloc[-(vol_window+2):-2]
+                    max_recent_volume = recent_volumes.max()
+                    
+                    # loose模式逻辑：先判断前一根是否放量，如果放量成功则直接判定为放量成功
+                    # 如果前一根没有放量，再判断当前K线是否放量
+                    prev_volume_ratio = prev_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    if prev_volume_ratio > vol_multiplier:
+                        # 前一根放量成功
+                        volume_expansion = True
+                        volume_ratio = prev_volume_ratio
                     else:
-                        # 默认情况使用平均成交量
-                        avg_volume = volumes.iloc[-11:-1].mean()
-                        current_volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        prev_volume_ratio = prev_volume / avg_volume if avg_volume != 0 else 0
-                        volume_ratio = max(current_volume_ratio, prev_volume_ratio)
-                        volume_expansion = volume_ratio > vol_multiplier
+                        # 前一根没有放量，判断当前K线是否放量
+                        current_volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                        volume_expansion = current_volume_ratio > vol_multiplier
+                        volume_ratio = current_volume_ratio
                 else:
                     volume_expansion = True  # 数据不足时默认满足成交量条件
             else:
                 # strict模式：要求当前K线放量（默认模式）
-                if len(volumes) >= 10:
-                    # 对于小周期（1m~5m），使用EMA成交量
-                    if bar in ['1m', '3m', '5m']:
-                        vol_ema = volumes.ewm(span=10).mean()
-                        volume_ratio = current_volume / vol_ema.iloc[-1] if vol_ema.iloc[-1] != 0 else 0
-                        volume_expansion = volume_ratio > vol_multiplier
-                    # 对于大周期（15m+），使用平均成交量
-                    elif bar in ['15m', '30m', '1H', '2H', '4H', '6H', '12H', '1D']:
-                        avg_volume = volumes.iloc[-10:-1].mean()  # 前10根K线的平均成交量（排除最后一根）
-                        volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        volume_expansion = volume_ratio > vol_multiplier
-                    else:
-                        # 默认情况使用平均成交量
-                        avg_volume = volumes.iloc[-10:-1].mean()
-                        volume_ratio = current_volume / avg_volume if avg_volume != 0 else 0
-                        volume_expansion = volume_ratio > vol_multiplier
+                if len(volumes) >= vol_window + 1:
+                    # 计算近期最高成交量（排除最后一根）
+                    recent_volumes = volumes.iloc[-(vol_window+1):-1]
+                    max_recent_volume = recent_volumes.max()
+                    
+                    # 计算当前K线的成交量比率
+                    volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    volume_expansion = volume_ratio > vol_multiplier
                 else:
                     volume_expansion = True  # 数据不足时默认满足成交量条件
             
@@ -317,8 +287,6 @@ class EMACrossoverStrategy:
                 'ema5': float(current_ema_short),
                 'ema20': float(current_ema_long),
                 'ema20_slope': ema20_slope,
-                'ema20_slope_fast': ema20_slope_fast if 'ema20_slope_fast' in locals() else 0,
-                'ema20_slope_slow': ema20_slope_slow if 'ema20_slope_slow' in locals() else 0,
                 'volume_expansion': volume_expansion,
                 'volume_ratio': float(volume_ratio),
                 'confirmation_pct': confirmation_pct,
