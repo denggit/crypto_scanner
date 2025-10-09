@@ -392,7 +392,7 @@ class CryptoScanner:
             均线粘合+发散形态的币种列表
         """
         if ma_periods is None:
-            ma_periods = [5, 20, 60]
+            ma_periods = [5, 15, 40]
 
         # 需要更多K线数据来计算均线斜率
         limit = max(ma_periods) + 2  # 额外数据用于计算斜率
