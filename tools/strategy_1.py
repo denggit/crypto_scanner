@@ -54,8 +54,10 @@ class EMACrossoverStrategy:
             int: 信号值 (1=买入, -1=卖出, 0=持有)
         """
         try:
+            # 根据bar确定vol_window
+            vol_window = 10 if bar in ['1m', '3m', '5m'] else 7
             # 获取足够的K线数据来计算EMA和成交量
-            limit = long_ma + 5  # 需要额外数据来计算斜率和交叉
+            limit = max(long_ma, vol_window) + 10
             df = self.market_data_retriever.get_kline(symbol, bar, limit)
             
             if df is None or len(df) < limit:
@@ -91,32 +93,26 @@ class EMACrossoverStrategy:
             # 计算成交量条件（使用近期最高成交量作为基准）
             current_volume = volumes.iloc[-1]
             volume_ratio = 0  # 初始化volume_ratio
-            
-            # 根据周期确定近期成交量窗口大小
-            if bar in ['1m', '3m', '5m']:
-                vol_window = 10  # 小周期使用10根K线
-            else:
-                vol_window = 7   # 大周期使用7根K线
-            
+
             # 根据模式选择成交量判断方式
             if mode == 'loose' and len(volumes) >= 2:
                 # loose模式：允许前一根K线放量
                 prev_volume = volumes.iloc[-2]
-                if len(volumes) >= vol_window + 2:  # 需要足够的数据来计算近期最高成交量（排除当前和前一根）
-                    # 计算近期最高成交量（排除当前和前一根）
-                    recent_volumes = volumes.iloc[-(vol_window+2):-2]
-                    max_recent_volume = recent_volumes.max()
+                if len(volumes) >= vol_window + 1:
+                    # 使用EMA计算平均成交量（到前一根K线为止）
+                    ema_volume = ema(volumes.iloc[:-1], vol_window)
+                    avg_recent_volume = ema_volume.iloc[-1] if len(ema_volume) > 0 else 0
                     
                     # loose模式逻辑：先判断前一根是否放量，如果放量成功则直接判定为放量成功
                     # 如果前一根没有放量，再判断当前K线是否放量
-                    prev_volume_ratio = prev_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    prev_volume_ratio = prev_volume / avg_recent_volume if avg_recent_volume != 0 else 0
                     if prev_volume_ratio > vol_multiplier:
                         # 前一根放量成功
                         volume_expansion = True
                         volume_ratio = prev_volume_ratio
                     else:
                         # 前一根没有放量，判断当前K线是否放量
-                        current_volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                        current_volume_ratio = current_volume / avg_recent_volume if avg_recent_volume != 0 else 0
                         volume_expansion = current_volume_ratio > vol_multiplier
                         volume_ratio = current_volume_ratio
                 else:
@@ -124,12 +120,12 @@ class EMACrossoverStrategy:
             else:
                 # strict模式：要求当前K线放量（默认模式）
                 if len(volumes) >= vol_window + 1:
-                    # 计算近期最高成交量（排除最后一根）
-                    recent_volumes = volumes.iloc[-(vol_window+1):-1]
-                    max_recent_volume = recent_volumes.max()
+                    # 使用EMA计算平均成交量（到前一根K线为止）
+                    ema_volume = ema(volumes.iloc[:-1], vol_window)
+                    avg_recent_volume = ema_volume.iloc[-1] if len(ema_volume) > 0 else 0
                     
                     # 计算当前K线的成交量比率
-                    volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    volume_ratio = current_volume / avg_recent_volume if avg_recent_volume != 0 else 0
                     volume_expansion = volume_ratio > vol_multiplier
                 else:
                     volume_expansion = True  # 数据不足时默认满足成交量条件
@@ -188,8 +184,10 @@ class EMACrossoverStrategy:
             dict: 包含策略计算详情的字典
         """
         try:
+            # 根据bar确定vol_window
+            vol_window = 10 if bar in ['1m', '3m', '5m'] else 7
             # 获取足够的K线数据来计算EMA和成交量
-            limit = long_ma + 5
+            limit = max(long_ma, vol_window) + 10
             df = self.market_data_retriever.get_kline(symbol, bar, limit)
             
             if df is None or len(df) < limit:
@@ -219,32 +217,26 @@ class EMACrossoverStrategy:
             # 计算成交量条件（使用近期最高成交量作为基准）
             current_volume = volumes.iloc[-1] if len(volumes) > 0 else 0
             volume_ratio = 0  # 初始化volume_ratio
-            
-            # 根据周期确定近期成交量窗口大小
-            if bar in ['1m', '3m', '5m']:
-                vol_window = 10  # 小周期使用10根K线
-            else:
-                vol_window = 5   # 大周期使用5根K线
-            
+
             # 根据模式选择成交量判断方式
             if mode == 'loose' and len(volumes) >= 2:
                 # loose模式：允许前一根K线放量
                 prev_volume = volumes.iloc[-2]
-                if len(volumes) >= vol_window + 2:  # 需要足够的数据来计算近期最高成交量（排除当前和前一根）
-                    # 计算近期最高成交量（排除当前和前一根）
-                    recent_volumes = volumes.iloc[-(vol_window+2):-2]
-                    max_recent_volume = recent_volumes.max()
+                if len(volumes) >= vol_window + 1:
+                    # 使用EMA计算平均成交量（到前一根K线为止）
+                    ema_volume = ema(volumes.iloc[:-1], vol_window)
+                    avg_recent_volume = ema_volume.iloc[-1] if len(ema_volume) > 0 else 0
                     
                     # loose模式逻辑：先判断前一根是否放量，如果放量成功则直接判定为放量成功
                     # 如果前一根没有放量，再判断当前K线是否放量
-                    prev_volume_ratio = prev_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    prev_volume_ratio = prev_volume / avg_recent_volume if avg_recent_volume != 0 else 0
                     if prev_volume_ratio > vol_multiplier:
                         # 前一根放量成功
                         volume_expansion = True
                         volume_ratio = prev_volume_ratio
                     else:
                         # 前一根没有放量，判断当前K线是否放量
-                        current_volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                        current_volume_ratio = current_volume / avg_recent_volume if avg_recent_volume != 0 else 0
                         volume_expansion = current_volume_ratio > vol_multiplier
                         volume_ratio = current_volume_ratio
                 else:
@@ -252,12 +244,12 @@ class EMACrossoverStrategy:
             else:
                 # strict模式：要求当前K线放量（默认模式）
                 if len(volumes) >= vol_window + 1:
-                    # 计算近期最高成交量（排除最后一根）
-                    recent_volumes = volumes.iloc[-(vol_window+1):-1]
-                    max_recent_volume = recent_volumes.max()
+                    # 使用EMA计算平均成交量（到前一根K线为止）
+                    ema_volume = ema(volumes.iloc[:-1], vol_window)
+                    avg_recent_volume = ema_volume.iloc[-1] if len(ema_volume) > 0 else 0
                     
                     # 计算当前K线的成交量比率
-                    volume_ratio = current_volume / max_recent_volume if max_recent_volume != 0 else 0
+                    volume_ratio = current_volume / avg_recent_volume if avg_recent_volume != 0 else 0
                     volume_expansion = volume_ratio > vol_multiplier
                 else:
                     volume_expansion = True  # 数据不足时默认满足成交量条件
