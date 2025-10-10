@@ -12,7 +12,7 @@ import sys
 import time
 import pandas as pd
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import copy
 
@@ -179,25 +179,25 @@ class StrategyMonitor:
             # 下一分钟的开始时间
             next_minute = now.replace(second=0, microsecond=0)
             if next_minute <= now:
-                next_minute = next_minute.replace(minute=next_minute.minute + 1)
+                next_minute = next_minute + timedelta(minutes=1)
             return int(next_minute.timestamp() * 1000)
         elif self.bar == '5m':
             # 下一个5分钟的开始时间
             next_5min = now.replace(minute=(now.minute // 5) * 5, second=0, microsecond=0)
             if next_5min <= now:
-                next_5min = next_5min.replace(minute=next_5min.minute + 5)
+                next_5min = next_5min + timedelta(minutes=5)
             return int(next_5min.timestamp() * 1000)
         elif self.bar == '15m':
             # 下一个15分钟的开始时间
             next_15min = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
             if next_15min <= now:
-                next_15min = next_15min.replace(minute=next_15min.minute + 15)
+                next_15min = next_15min + timedelta(minutes=15)
             return int(next_15min.timestamp() * 1000)
         else:
             # 默认1分钟
             next_minute = now.replace(second=0, microsecond=0)
             if next_minute <= now:
-                next_minute = next_minute.replace(minute=next_minute.minute + 1)
+                next_minute = next_minute + timedelta(minutes=1)
             return int(next_minute.timestamp() * 1000)
     
     def _wait_for_next_bar(self):
