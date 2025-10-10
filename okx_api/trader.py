@@ -16,7 +16,8 @@ class Trader:
         """
         self.client = client
 
-    def place_market_order(self, instId: str, side: str, sz: str, tdMode: str = 'cash') -> Optional[Order]:
+    def place_market_order(self, instId: str, side: str, sz: str, tdMode: str = 'cash', 
+                           reduceOnly: bool = False, tgtCcy: str = None) -> Optional[Order]:
         """
         Place a market order
 

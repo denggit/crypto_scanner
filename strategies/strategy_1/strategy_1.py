@@ -295,7 +295,7 @@ class EMACrossoverStrategy:
             }
             
         except Exception as e:
-            print(f"Error getting strategy details for {symbol}: {e}")
+            print(f"Error getting strategies details for {symbol}: {e}")
             return {}
 
 

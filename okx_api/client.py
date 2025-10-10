@@ -258,7 +258,8 @@ class OKXClient:
         return self._make_request('GET', endpoint, signed=True)
 
     def place_order(self, instId: str, tdMode: str, side: str, ordType: str,
-                   sz: str, px: str = None, reduceOnly: bool = False) -> Dict:
+                   sz: str = None, px: str = None, reduceOnly: bool = False, 
+                   tgtCcy: str = None) -> Dict:
         """
         Place order (requires authentication)
 
@@ -267,9 +268,10 @@ class OKXClient:
             tdMode: Trade mode (cash, cross, isolated)
             side: Order side (buy, sell)
             ordType: Order type (market, limit, post_only, fok, ioc)
-            sz: Quantity
+            sz: Quantity (can be in base_ccy or quote_ccy depending on tgtCcy)
             px: Price (required for limit orders)
             reduceOnly: Reduce only flag
+            tgtCcy: Order quantity unit (base_ccy, quote_ccy) - if quote_ccy, sz is in USDT
 
         Returns:
             Order result
@@ -279,14 +281,17 @@ class OKXClient:
             'instId': instId,
             'tdMode': tdMode,
             'side': side,
-            'ordType': ordType,
-            'sz': sz
+            'ordType': ordType
         }
-
+        
+        if sz:
+            params['sz'] = sz
         if px:
             params['px'] = px
         if reduceOnly:
             params['reduceOnly'] = reduceOnly
+        if tgtCcy:
+            params['tgtCcy'] = tgtCcy
 
         return self._make_request('POST', endpoint, params, signed=True)
 
@@ -308,3 +313,59 @@ class OKXClient:
         if state:
             params['state'] = state
         return self._make_request('GET', endpoint, params, signed=True)
+    
+    def set_leverage(self, instId: str, lever: str, mgnMode: str, posSide: str = None) -> Dict:
+        """
+        Set leverage for instrument (requires authentication)
+        
+        Args:
+            instId: Instrument ID (e.g., BTC-USDT-SWAP)
+            lever: Leverage (e.g., "3" for 3x)
+            mgnMode: Margin mode (cross, isolated)
+            posSide: Position side (long, short, net) - required for long/short mode
+            
+        Returns:
+            Set leverage result
+        """
+        endpoint = "/api/v5/account/set-leverage"
+        params = {
+            'instId': instId,
+            'lever': lever,
+            'mgnMode': mgnMode
+        }
+        if posSide:
+            params['posSide'] = posSide
+        return self._make_request('POST', endpoint, params, signed=True)
+    
+    def get_positions(self, instId: str = None) -> Dict:
+        """
+        Get positions (requires authentication)
+        
+        Args:
+            instId: Instrument ID (optional)
+            
+        Returns:
+            Positions data
+        """
+        endpoint = "/api/v5/account/positions"
+        params = {}
+        if instId:
+            params['instId'] = instId
+        return self._make_request('GET', endpoint, params, signed=True)
+    
+    def get_instruments(self, instType: str, instId: str = None) -> Dict:
+        """
+        Get instrument information
+        
+        Args:
+            instType: Instrument type (SPOT, SWAP, FUTURES, OPTION)
+            instId: Instrument ID (optional)
+            
+        Returns:
+            Instrument data including contract size, tick size, etc.
+        """
+        endpoint = "/api/v5/public/instruments"
+        params = {'instType': instType}
+        if instId:
+            params['instId'] = instId
+        return self._make_request('GET', endpoint, params)
