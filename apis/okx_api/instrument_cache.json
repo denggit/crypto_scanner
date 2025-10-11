@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "created_at": "2025-10-11T22:33:17.227748",
-  "last_updated": "2025-10-11T23:32:01.878143",
+  "last_updated": "2025-10-12T00:58:47.824247",
   "instruments": {
     "PEPE-USDT-SWAP": {
       "data": {
@@ -66,6 +66,38 @@
       },
       "last_updated": "2025-10-11T23:32:01.878137",
       "inst_id": "BTC-USDT-SWAP"
+    },
+    "LTC-USDT-SWAP": {
+      "data": {
+        "instId": "LTC-USDT-SWAP",
+        "uly": "LTC-USDT",
+        "category": "1",
+        "baseCcy": "",
+        "quoteCcy": "",
+        "settleCcy": "USDT",
+        "ctVal": "1",
+        "ctMult": "1",
+        "ctValCcy": "LTC",
+        "optType": "",
+        "stk": "",
+        "listTime": "1573557408000",
+        "expTime": "",
+        "lever": "50",
+        "tickSz": "0.01",
+        "lotSz": "0.1",
+        "minSz": "0.1",
+        "ctType": "linear",
+        "alias": "",
+        "state": "live",
+        "maxLmtSz": "100000000",
+        "maxMktSz": "10000",
+        "maxTwapSz": "100000000.0000000000000000",
+        "maxIcebergSz": "100000000.0000000000000000",
+        "maxTriggerSz": "100000000.0000000000000000",
+        "maxStopSz": "10000"
+      },
+      "last_updated": "2025-10-12T00:58:47.824225",
+      "inst_id": "LTC-USDT-SWAP"
     }
   }
 }

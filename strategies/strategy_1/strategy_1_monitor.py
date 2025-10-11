@@ -517,18 +517,21 @@ def main():
 
     # 加载配置
     if args.config:
-        config = load_config_from_file(args.config)
-        if not config:
-            logger.error("配置文件加载失败，使用默认配置")
-            config = {}
+        # 加载用户指定的配置文件作为默认值
+        default_config = load_config_from_file(args.config)
+        if not default_config:
+            logger.error("配置文件加载失败，使用系统默认值")
+            default_config = {}
     else:
         # 加载默认配置文件作为用户输入的默认值
-        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        config_path = os.path.join(os.path.dirname(__file__), 'configs/ltc_usdt_swap.json')
         default_config = load_config_from_file(config_path)
         if not default_config:
             logger.info("未找到默认配置文件，使用系统默认值")
             default_config = {}
-        config = get_user_input(default_config)
+    
+    # 始终咨询用户输入，使用配置文件作为默认值
+    config = get_user_input(default_config)
 
     # 设置默认值
     symbol = config.get('symbol', 'BTC-USDT')
@@ -543,6 +546,32 @@ def main():
     leverage = config.get('leverage', 3)
     assist_cond = config.get('assist_cond', 'volume')
     params = config.get('params', {})
+
+    # 打印最终使用的参数
+    logger.info("\n" + "=" * 50)
+    logger.info("本次运行使用的最终参数:")
+    logger.info(f"  交易对: {symbol}")
+    logger.info(f"  K线周期: {bar}")
+    logger.info(f"  EMA参数: {short_ma}/{long_ma}")
+    logger.info(f"  模式: {mode}")
+    logger.info(f"  移动止损: {trailing_stop_pct}%")
+    logger.info(f"  真实交易: {'是' if trade else '否'}")
+    logger.info(f"  辅助条件: {assist_cond if assist_cond else '无'}")
+    
+    if assist_cond == 'volume':
+        logger.info(f"  成交量倍数: {params.get('vol_multiplier', 1.2)}")
+        logger.info(f"  确认百分比: {params.get('confirmation_pct', 0.2)}%")
+    elif assist_cond == 'rsi':
+        logger.info(f"  RSI周期: {params.get('rsi_period', 9)}")
+    
+    if trade:
+        trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}
+        logger.info(f"  交易模式: {trade_mode_names.get(trade_mode, '未知')}")
+        logger.info(f"  每次交易金额: {trade_amount} USDT")
+        if trade_mode in [2, 3]:
+            logger.info(f"  杠杆倍数: {leverage}x")
+    
+    logger.info("=" * 50 + "\n")
 
     # 创建监控器
     monitor = StrategyMonitor(

@@ -6,7 +6,7 @@
   "mode": "loose",
   "trailing_stop_pct": 1.0,
   "trade": false,
-  "trade_amount": 10.0,
+  "trade_amount": 1.0,
   "trade_mode": 3,
   "leverage": 3,
   "assist_cond": "volume",
