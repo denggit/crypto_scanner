@@ -118,7 +118,6 @@ class Strategy1Trader(BaseTrader):
             side='buy',
             sz=str(self.trade_amount),
             tdMode=td_mode,
-            tgtCcy='quote_ccy',
             posSide='long'
         )
         return order
@@ -147,7 +146,6 @@ class Strategy1Trader(BaseTrader):
             side='sell',
             sz=str(self.trade_amount),
             tdMode=td_mode,
-            tgtCcy='quote_ccy',
             posSide="short"
         )
         return order

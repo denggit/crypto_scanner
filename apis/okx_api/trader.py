@@ -1,6 +1,8 @@
 from typing import Optional
+
 from .client import OKXClient
 from .models import Order
+
 
 class Trader:
     """
@@ -17,7 +19,7 @@ class Trader:
         self.client = client
 
     def place_market_order(self, instId: str, side: str, sz: str, tdMode: str = 'cash', posSide=None,
-                           reduceOnly: bool = False, tgtCcy: str = 'quote_ccy') -> Optional[Order]:
+                           reduceOnly: bool = False) -> Optional[Order]:
         """
         Place a market order
 
@@ -28,11 +30,12 @@ class Trader:
             tdMode: Trade mode ('cash', 'cross', 'isolated')
             posSide: 持仓方向 (long, short)
             reduceOnly: Reduce only flag
-            tgtCcy: base_ccy: 交易货币 ；quote_ccy：计价货币。买单默认quote_ccy， 卖单默认base_ccy
 
         Returns:
             Order object if successful, None otherwise
         """
+        # tgtCcy: base_ccy: 交易货币 ；quote_ccy：计价货币。买单默认quote_ccy， 卖单默认base_ccy
+        tgtCcy = "base_ccy" if side == "sell" else "quote_ccy"
         response = self.client.place_order(
             instId=instId,
             tdMode=tdMode,
@@ -40,8 +43,8 @@ class Trader:
             ordType='market',
             sz=sz,
             reduceOnly=reduceOnly,
-            tgtCcy=tgtCcy,
-            posSide=posSide
+            posSide=posSide,
+            tgtCcy=tgtCcy
         )
 
         if response.get('code') == '0' and 'data' in response:
@@ -63,7 +66,7 @@ class Trader:
         return None
 
     def place_limit_order(self, instId: str, side: str, sz: str, px: str,
-                         tdMode: str = 'cash', reduceOnly: bool = False, tgtCcy: str = 'quote_ccy') -> Optional[Order]:
+                          tdMode: str = 'cash', reduceOnly: bool = False, tgtCcy: str = 'quote_ccy') -> Optional[Order]:
         """
         Place a limit order
 
