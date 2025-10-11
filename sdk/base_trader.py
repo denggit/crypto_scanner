@@ -10,6 +10,7 @@ from typing import Optional
 import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import math
 from utils.logger import logger
 
 
@@ -34,6 +35,9 @@ class BaseTrader(ABC):
         self.trade_amount = trade_amount
         self.trade_mode = trade_mode
         self.leverage = leverage
+        
+        # Cache for instrument information to avoid repeated API calls
+        self._instrument_cache = {}
         
         self.td_mode_map = {
             self.TRADE_MODE_SPOT: 'cash',
@@ -210,7 +214,88 @@ class BaseTrader(ABC):
                     return False
                     
         except Exception as e:
-            logger.error(f"❌ [真实交易] {symbol} 执行交易时出错: {e}")
+            logger.exception(f"❌ [真实交易] {symbol} 执行交易时出错: {e}")
             return False
         
         return False
+
+    def calculate_order_size(self, symbol: str, price: float) -> str:
+        """
+        Calculate the correct order size based on instrument parameters and trade amount
+        
+        Args:
+            symbol: Trading pair symbol (e.g., 'BTC-USDT')
+            price: Current price of the instrument
+            
+        Returns:
+            str: Order size as string formatted for API
+        """
+        try:
+            # Check if instrument info is already cached
+            if symbol in self._instrument_cache:
+                instrument = self._instrument_cache[symbol]
+                logger.debug(f"使用缓存的合约信息: {symbol}")
+            else:
+                # Get instrument information from API
+                from apis.okx_api import MarketDataRetriever
+                market_retriever = MarketDataRetriever(self.client)
+                instrument = market_retriever.get_instrument_info(symbol)
+                
+                if instrument:
+                    # Cache the instrument info for future use
+                    self._instrument_cache[symbol] = instrument
+                    logger.debug(f"缓存合约信息: {symbol}")
+                    
+                    # Save to JSON cache file
+                    from apis.okx_api.instrument_cache import InstrumentCache
+                    cache = InstrumentCache()
+                    cache.save_instrument(symbol, instrument)
+                else:
+                    # Try to load from JSON cache as fallback
+                    from apis.okx_api.instrument_cache import InstrumentCache
+                    cache = InstrumentCache()
+                    cached_instrument = cache.get_instrument(symbol)
+                    
+                    if cached_instrument:
+                        # Cached data is now a dictionary, we need to convert it back to Instrument object
+                        # For now, we'll use it as a dictionary since the code accesses attributes like .minSz, .ctVal
+                        instrument = cached_instrument
+                        self._instrument_cache[symbol] = instrument
+                        logger.info(f"📖 从JSON缓存读取instrument信息: {symbol}")
+                    else:
+                        logger.warning(f"无法获取 {symbol} 的合约信息，使用默认下单数量")
+                        return str(self.trade_amount)
+            
+            # Get contract parameters
+            # Handle both Instrument object and dictionary
+            if hasattr(instrument, 'minSz'):
+                # It's an Instrument object
+                min_sz = float(instrument.minSz)
+                ct_val = float(instrument.ctVal)
+            else:
+                # It's a dictionary from cache
+                min_sz = float(instrument.get('minSz', '0'))
+                ct_val = float(instrument.get('ctVal', '0'))
+            
+            # Calculate single currency value
+            single_currency_value = price
+            
+            # Calculate required sz based on trade amount
+            if ct_val > 0:
+                # For derivatives: sz = trade_amount / (single_currency_value * ct_val)
+                calculated_sz = self.trade_amount / (single_currency_value * ct_val)
+            else:
+                # For spot: sz = trade_amount / single_currency_value
+                calculated_sz = self.trade_amount / single_currency_value
+            
+            # Ensure minimum order size
+            final_sz = math.ceil(max(min_sz, calculated_sz) * 10) / 10
+            
+            logger.info(f"下单数量计算: symbol={symbol}, trade_amount={self.trade_amount}, price={price:.8f}, "
+                      f"min_sz={min_sz}, ct_val={ct_val}, calculated_sz={calculated_sz:.8f}, final_sz={final_sz:.8f}")
+            
+            return str(final_sz)
+            
+        except Exception as e:
+            logger.error(f"计算下单数量失败: {e}")
+            return str(self.trade_amount)

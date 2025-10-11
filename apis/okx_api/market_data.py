@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from .client import OKXClient
-from .models import Ticker, OrderBook, Candle, MarketData
+from .models import Ticker, OrderBook, Candle, MarketData, Instrument
 from utils.logger import logger
 
 
@@ -333,3 +333,162 @@ class MarketDataRetriever:
                 df[f'MA_{period}'] = df['close'].rolling(window=period).mean()
 
         return df
+
+    def get_instruments(self, instType: str, instId: str = None, uly: str = None, state: str = 'live') -> List[Instrument]:
+        """
+        Get instrument information
+
+        Args:
+            instType (str): Instrument type to retrieve instruments for.
+                           Options are:
+                           - 'SPOT': Spot trading pairs (e.g., BTC-USDT)
+                           - 'FUTURES': Futures contracts with expiration dates
+                           - 'SWAP': Perpetual swap contracts without expiration
+                           - 'OPTION': Options contracts
+            instId (str, optional): Specific instrument ID to retrieve information for.
+            uly (str, optional): Underlying asset to filter by.
+            state (str, optional): Instrument state to filter by. Defaults to 'live'.
+                                  Options: 'live', 'suspend', 'preopen', 'settlement'
+
+        Returns:
+            List[Instrument]: List of Instrument objects containing detailed instrument information
+        """
+        response = self.client.get_instruments(instType, instId)
+        instruments = []
+
+        if response.get('code') == '0' and 'data' in response:
+            for inst_data in response['data']:
+                instrument = Instrument(
+                    instId=inst_data.get('instId', ''),
+                    uly=inst_data.get('uly', ''),
+                    category=inst_data.get('category', ''),
+                    baseCcy=inst_data.get('baseCcy', ''),
+                    quoteCcy=inst_data.get('quoteCcy', ''),
+                    settleCcy=inst_data.get('settleCcy', ''),
+                    ctVal=inst_data.get('ctVal', 0),
+                    ctMult=inst_data.get('ctMult', 0),
+                    ctValCcy=inst_data.get('ctValCcy', ''),
+                    optType=inst_data.get('optType', ''),
+                    stk=inst_data.get('stk', 0),
+                    listTime=inst_data.get('listTime', 0),
+                    expTime=inst_data.get('expTime', 0),
+                    lever=inst_data.get('lever', 0),
+                    tickSz=inst_data.get('tickSz', 0),
+                    lotSz=inst_data.get('lotSz', 0),
+                    minSz=inst_data.get('minSz', 0),
+                    ctType=inst_data.get('ctType', ''),
+                    alias=inst_data.get('alias', ''),
+                    state=inst_data.get('state', ''),
+                    maxLmtSz=inst_data.get('maxLmtSz', 0),
+                    maxMktSz=inst_data.get('maxMktSz', 0),
+                    maxTwapSz=inst_data.get('maxTwapSz', 0),
+                    maxIcebergSz=inst_data.get('maxIcebergSz', 0),
+                    maxTriggerSz=inst_data.get('maxTriggerSz', 0),
+                    maxStopSz=inst_data.get('maxStopSz', 0)
+                )
+
+                # Apply filters
+                if uly and instrument.uly != uly:
+                    continue
+                if state and instrument.state != state:
+                    continue
+
+                instruments.append(instrument)
+
+        return instruments
+
+    def get_instrument_info(self, instId: str) -> Instrument:
+        """
+        Get detailed information for a specific instrument
+
+        Args:
+            instId (str): Instrument ID to retrieve information for (e.g., 'BTC-USDT', 'BTC-USDT-SWAP')
+
+        Returns:
+            Instrument: Instrument object containing detailed information, or None if not found
+        """
+        # Determine instrument type from instId
+        if instId.endswith('-SWAP'):
+            instType = 'SWAP'
+        elif instId.endswith('-FUTURES'):
+            instType = 'FUTURES'
+        elif instId.endswith('-OPTION'):
+            instType = 'OPTION'
+        else:
+            instType = 'SPOT'
+
+        instruments = self.get_instruments(instType, instId)
+        return instruments[0] if instruments else None
+
+    def get_instruments_by_currency(self, instType: str, currency: str, state: str = 'live') -> List[Instrument]:
+        """
+        Get instruments filtered by currency
+
+        Args:
+            instType (str): Instrument type to retrieve instruments for.
+            currency (str): Currency to filter by (e.g., 'USDT', 'USD').
+            state (str, optional): Instrument state to filter by. Defaults to 'live'.
+
+        Returns:
+            List[Instrument]: List of Instrument objects for the specified currency
+        """
+        instruments = self.get_instruments(instType, state=state)
+        
+        if instType == 'SPOT':
+            # For SPOT, filter by quote currency
+            return [inst for inst in instruments if inst.quoteCcy == currency]
+        else:
+            # For derivatives, filter by settle currency
+            return [inst for inst in instruments if inst.settleCcy == currency]
+
+    def get_contract_details(self, instId: str) -> Dict[str, float]:
+        """
+        Get contract details for an instrument (contract value, multiplier, etc.)
+
+        Args:
+            instId (str): Instrument ID to retrieve contract details for
+
+        Returns:
+            Dict[str, float]: Dictionary containing contract details
+        """
+        instrument = self.get_instrument_info(instId)
+        if not instrument:
+            return {}
+
+        return {
+            'contract_value': instrument.ctVal,
+            'contract_multiplier': instrument.ctMult,
+            'tick_size': instrument.tickSz,
+            'lot_size': instrument.lotSz,
+            'min_order_size': instrument.minSz,
+            'max_limit_size': instrument.maxLmtSz,
+            'max_market_size': instrument.maxMktSz
+        }
+
+    def get_trading_parameters(self, instId: str) -> Dict[str, any]:
+        """
+        Get trading parameters for an instrument
+
+        Args:
+            instId (str): Instrument ID to retrieve trading parameters for
+
+        Returns:
+            Dict[str, any]: Dictionary containing trading parameters
+        """
+        instrument = self.get_instrument_info(instId)
+        if not instrument:
+            return {}
+
+        return {
+            'instrument_id': instrument.instId,
+            'base_currency': instrument.baseCcy,
+            'quote_currency': instrument.quoteCcy,
+            'settle_currency': instrument.settleCcy,
+            'tick_size': instrument.tickSz,
+            'lot_size': instrument.lotSz,
+            'min_order_size': instrument.minSz,
+            'max_leverage': instrument.lever,
+            'instrument_state': instrument.state,
+            'contract_type': instrument.ctType,
+            'alias': instrument.alias
+        }

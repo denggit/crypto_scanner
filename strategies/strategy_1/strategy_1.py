@@ -29,7 +29,6 @@ class EMACrossoverStrategy:
 
     def calculate_ema_crossover_signal(self, symbol: str, bar: str = '1m', 
                                      short_ma: int = 5, long_ma: int = 20,
-                                     vol_multiplier: float = 1.2, confirmation_pct: float = 0.2,
                                      mode: str = 'strict', assist_cond: str = 'volume', **params) -> int:
         """
         计算EMA交叉信号
@@ -44,8 +43,6 @@ class EMACrossoverStrategy:
             bar: K线时间间隔 (default: 1m)
             short_ma: 短期EMA周期 (default: 5)
             long_ma: 长期EMA周期 (default: 20)
-            vol_multiplier: 成交量放大倍数 (default: 1.2)
-            confirmation_pct: 确认突破百分比 (default: 0.2)
             mode: 模式 ('strict' or 'loose', default: 'strict')
                   strict mode: 要求当前K线放量（趋势稳健）
                   loose mode: 允许前一根放量（更激进，适合山寨）
@@ -54,6 +51,8 @@ class EMACrossoverStrategy:
                   rsi: 要求RSI条件满足（做多时RSI>55，做空时RSI<45）
                   None: 不使用辅助条件
             **params: 辅助条件的具体参数
+                  vol_multiplier: 成交量放大倍数 (default: 1.2)
+                  confirmation_pct: 确认突破百分比 (default: 0.2)
                   rsi_period: RSI计算周期 (default: 9)
             
         Returns:
@@ -99,6 +98,10 @@ class EMACrossoverStrategy:
             # 计算成交量条件（使用近期最高成交量作为基准）
             current_volume = volumes.iloc[-1]
             volume_ratio = 0  # 初始化volume_ratio
+            
+            # 获取辅助条件参数
+            vol_multiplier = params.get('vol_multiplier', 1.2)
+            confirmation_pct = params.get('confirmation_pct', 0.2)
             
             # 计算RSI条件（如果需要）
             current_rsi = 50  # 默认值
@@ -192,7 +195,6 @@ class EMACrossoverStrategy:
 
     def get_strategy_details(self, symbol: str, bar: str = '1m', 
                            short_ma: int = 5, long_ma: int = 20,
-                           vol_multiplier: float = 1.2, confirmation_pct: float = 0.2,
                            mode: str = 'strict', assist_cond: str = 'volume', **params) -> dict:
         """
         获取策略详细信息，用于调试和分析
@@ -202,11 +204,14 @@ class EMACrossoverStrategy:
             bar: K线时间间隔
             short_ma: 短期EMA周期
             long_ma: 长期EMA周期
-            vol_multiplier: 成交量放大倍数 (default: 1.2)
-            confirmation_pct: 确认突破百分比 (default: 0.2)
             mode: 模式 ('strict' or 'loose', default: 'strict')
                   strict mode: 要求当前K线放量（趋势稳健）
                   loose mode: 允许前一根放量（更激进，适合山寨）
+            assist_cond: 辅助条件类型 ('volume', 'rsi', or None, default: 'volume')
+            **params: 辅助条件的具体参数
+                  vol_multiplier: 成交量放大倍数 (default: 1.2)
+                  confirmation_pct: 确认突破百分比 (default: 0.2)
+                  rsi_period: RSI计算周期 (default: 9)
             
         Returns:
             dict: 包含策略计算详情的字典
@@ -238,6 +243,10 @@ class EMACrossoverStrategy:
             
             current_ema_long = ema_long.iloc[-1] if len(ema_long) > 0 else 0
             prev_ema_long = ema_long.iloc[-2] if len(ema_long) > 1 else 0
+            
+            # 获取辅助条件参数
+            vol_multiplier = params.get('vol_multiplier', 1.2)
+            confirmation_pct = params.get('confirmation_pct', 0.2)
             
             # 计算EMA20斜率（直接使用最近两根K线的斜率）
             ema20_slope = (current_ema_long - prev_ema_long) / prev_ema_long if prev_ema_long != 0 else 0
@@ -296,7 +305,7 @@ class EMACrossoverStrategy:
             price_below_ema5 = current_close < current_ema_short
             
             # 计算信号
-            signal = self.calculate_ema_crossover_signal(symbol, bar, short_ma, long_ma, vol_multiplier, confirmation_pct, mode, assist_cond, **params)
+            signal = self.calculate_ema_crossover_signal(symbol, bar, short_ma, long_ma, mode, assist_cond, **params)
             
             # 计算平均成交量用于返回（如果未定义则设为0）
             avg_volume = volumes.iloc[-10:-1].mean() if len(volumes) >= 10 else 0
@@ -341,8 +350,8 @@ def main():
     
     for symbol in test_symbols:
         try:
-            signal = strategy.calculate_ema_crossover_signal(symbol, bar='1m', short_ma=5, long_ma=20, vol_multiplier=1.2, confirmation_pct=0.2, mode='strict')
-            details = strategy.get_strategy_details(symbol, bar='1m', short_ma=5, long_ma=20, vol_multiplier=1.2, confirmation_pct=0.2, mode='strict')
+            signal = strategy.calculate_ema_crossover_signal(symbol, bar='1m', short_ma=5, long_ma=20, mode='strict', assist_cond='volume', vol_multiplier=1.2, confirmation_pct=0.2)
+            details = strategy.get_strategy_details(symbol, bar='1m', short_ma=5, long_ma=20, mode='strict', assist_cond='volume', vol_multiplier=1.2, confirmation_pct=0.2)
             
             if details:
                 logger.info(f"\n{symbol}:")

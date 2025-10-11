@@ -113,10 +113,24 @@ class Strategy1Trader(BaseTrader):
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
 
+        # 计算正确的下单数量
+        if price is None:
+            # 如果没有提供价格，获取当前价格
+            from apis.okx_api.market_data import MarketDataRetriever
+            market_retriever = MarketDataRetriever(self.client)
+            ticker = market_retriever.get_ticker_by_symbol(inst_id)
+            if ticker:
+                price = ticker.last
+            else:
+                logger.error(f"❌ 无法获取 {inst_id} 的价格")
+                return None
+
+        order_size = self.calculate_order_size(inst_id, price)
+
         order = self.trader.place_market_order(
             instId=inst_id,
             side='buy',
-            sz=str(self.trade_amount),
+            sz=order_size,
             tdMode=td_mode,
             posSide='long'
         )
@@ -141,10 +155,24 @@ class Strategy1Trader(BaseTrader):
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
 
+        # 计算正确的下单数量
+        if price is None:
+            # 如果没有提供价格，获取当前价格
+            from apis.okx_api.market_data import MarketDataRetriever
+            market_retriever = MarketDataRetriever(self.client)
+            ticker = market_retriever.get_ticker_by_symbol(inst_id)
+            if ticker:
+                price = ticker.last
+            else:
+                logger.error(f"❌ 无法获取 {inst_id} 的价格")
+                return None
+
+        order_size = self.calculate_order_size(inst_id, price)
+
         order = self.trader.place_market_order(
             instId=inst_id,
             side='sell',
-            sz=str(self.trade_amount),
+            sz=order_size,
             tdMode=td_mode,
             posSide="short"
         )

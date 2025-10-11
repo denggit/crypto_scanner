@@ -33,7 +33,6 @@ class StrategyMonitor(Strategy1Monitor):
 
     def __init__(self, symbol: str, bar: str = '1m',
                  short_ma: int = 5, long_ma: int = 20,
-                 vol_multiplier: float = 1.2, confirmation_pct: float = 0.2,
                  mode: str = 'strict', trailing_stop_pct: float = 1.0,
                  trade: bool = False, trade_amount: float = 10.0,
                  trade_mode: int = 3, leverage: int = 3, assist_cond: str = 'volume', **params):
@@ -45,8 +44,6 @@ class StrategyMonitor(Strategy1Monitor):
             bar: K-line time interval
             short_ma: Short EMA period
             long_ma: Long EMA period
-            vol_multiplier: Volume multiplier
-            confirmation_pct: Confirmation percentage
             mode: Mode ('strict' or 'loose')
             trailing_stop_pct: Trailing stop percentage
             trade: Whether to execute real trades (True) or mock trades (False)
@@ -55,6 +52,9 @@ class StrategyMonitor(Strategy1Monitor):
             leverage: Leverage multiplier (default: 3x)
             assist_cond: Assist condition type ('volume', 'rsi', or None, default: 'volume')
             **params: Additional parameters for assist conditions
+                  vol_multiplier: Volume multiplier (default: 1.2)
+                  confirmation_pct: Confirmation percentage (default: 0.2)
+                  rsi_period: RSI period (default: 9)
         """
         self.trade_amount = trade_amount
         self.trade_mode_setting = trade_mode
@@ -62,12 +62,16 @@ class StrategyMonitor(Strategy1Monitor):
 
         self.short_ma = short_ma
         self.long_ma = long_ma
-        self.vol_multiplier = vol_multiplier
-        self.confirmation_pct = confirmation_pct
         self.mode = mode
         self.trailing_stop_pct = trailing_stop_pct
         self.assist_cond = assist_cond
-        self.params = params
+        
+        # 设置默认参数并合并用户提供的参数
+        self.params = {
+            'vol_multiplier': 1.2,
+            'confirmation_pct': 0.2
+        }
+        self.params.update(params)
 
         # 从环境变量获取API凭证（如果存在）
         api_key = os.getenv('OK-ACCESS-KEY')
@@ -83,6 +87,87 @@ class StrategyMonitor(Strategy1Monitor):
         
         from sdk.base_monitor import BaseMonitor
         BaseMonitor.__init__(self, symbol, bar, trade_mode=trade)
+        
+        # 预加载instrument信息到缓存
+        self._preload_instrument_info()
+
+    def _preload_instrument_info(self):
+        """
+        预加载instrument信息到缓存
+        - 真实交易模式：如果加载失败则退出程序
+        - 模拟交易模式：如果加载失败则发出警告
+        """
+        try:
+            # 获取交易对的实际instrument ID（考虑杠杆模式）
+            inst_id = self.trader._get_inst_id(self.symbol)
+            
+            logger.info(f"正在预加载instrument信息: {inst_id}")
+            
+            # 先检查JSON缓存
+            from apis.okx_api.instrument_cache import InstrumentCache
+            cache = InstrumentCache()
+            cached_instrument = cache.get_instrument(inst_id)
+            
+            if cached_instrument:
+                # 如果JSON缓存中有有效数据，直接使用
+                self.trader._instrument_cache[inst_id] = cached_instrument
+                logger.info(f"✅ 从JSON缓存加载instrument信息: {inst_id}")
+                # Handle both Instrument object and dictionary
+                if hasattr(cached_instrument, 'minSz'):
+                    logger.info(f"   - 最小下单数量: {cached_instrument.minSz}")
+                    logger.info(f"   - 合约面值: {cached_instrument.ctVal}")
+                else:
+                    logger.info(f"   - 最小下单数量: {cached_instrument.get('minSz', 'N/A')}")
+                    logger.info(f"   - 合约面值: {cached_instrument.get('ctVal', 'N/A')}")
+                return
+            
+            # 尝试计算订单大小来触发instrument信息获取和缓存
+            # 先获取当前价格
+            ticker = self.market_data_retriever.get_ticker_by_symbol(inst_id)
+            if not ticker:
+                if self.trade_mode:
+                    logger.error(f"❌ 无法获取 {inst_id} 的价格信息，真实交易无法进行")
+                    raise Exception(f"无法获取 {inst_id} 的价格信息")
+                else:
+                    logger.warning(f"⚠️ 无法获取 {inst_id} 的价格信息，模拟交易将继续运行")
+                    return
+            
+            current_price = ticker.last
+            
+            # 调用calculate_order_size来触发instrument信息获取和缓存
+            order_size = self.trader.calculate_order_size(inst_id, current_price)
+            
+            # 检查instrument信息是否成功缓存
+            if inst_id in self.trader._instrument_cache:
+                instrument = self.trader._instrument_cache[inst_id]
+                logger.info(f"✅ 成功预加载instrument信息: {inst_id}")
+                # Handle both Instrument object and dictionary
+                if hasattr(instrument, 'minSz'):
+                    logger.info(f"   - 最小下单数量: {instrument.minSz}")
+                    logger.info(f"   - 合约价值: {instrument.ctVal}")
+                else:
+                    logger.info(f"   - 最小下单数量: {instrument.get('minSz', 'N/A')}")
+                    logger.info(f"   - 合约价值: {instrument.get('ctVal', 'N/A')}")
+                logger.info(f"   - 计算的下单数量: {order_size}")
+            else:
+                if self.trade_mode:
+                    logger.error(f"❌ instrument信息未成功缓存，真实交易无法进行")
+                    raise Exception(f"instrument信息未成功缓存")
+                else:
+                    logger.warning(f"⚠️  instrument信息未成功缓存，模拟交易将继续运行")
+                
+        except Exception as e:
+            if self.trade_mode:
+                logger.error(f"❌ 预加载instrument信息失败: {e}")
+                logger.error(f"❌ 真实交易无法启动，原因可能是：")
+                logger.error(f"   1. 网络连接问题 - 无法连接到OKX API")
+                logger.error(f"   2. API配置错误 - 请检查API密钥和权限")
+                logger.error(f"   3. 交易对不存在 - 请检查symbol是否正确")
+                logger.error(f"❌ 请解决问题后重新启动监控进程")
+                raise SystemExit("真实交易因instrument信息加载失败而退出")
+            else:
+                logger.warning(f"⚠️  预加载instrument信息失败: {e}")
+                logger.warning(f"⚠️  模拟交易将继续运行，但下单数量计算可能不准确")
 
     def get_csv_headers(self) -> list:
         """Get CSV headers for recording data"""
@@ -137,41 +222,42 @@ class StrategyMonitor(Strategy1Monitor):
                 self.mock_highest_price = price  # 持空仓时也记录最高价用于参考
                 action = "SHORT_OPEN"
                 self.trade_count += 1
+        elif self.mock_position == 1:
+            if trailing_stop_triggered:
+                exit_price = price
+                return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
+                action = "LONG_CLOSE_TRAILING_STOP"
+                self.mock_position = 0
+                self.mock_highest_price = 0.0
+                self.trade_count += 1
+            elif signal == -1:
+                exit_price = price
+                return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
+                action = "LONG_CLOSE_SHORT_OPEN"
+                self.mock_position = -1
+                self.mock_entry_price = price
+                self.mock_highest_price = price  # 重新初始化
+                self.mock_lowest_price = price  # 重新初始化
+                self.trade_count += 1
+        elif self.mock_position == -1:
+            if trailing_stop_triggered:
+                exit_price = price
+                return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
+                action = "SHORT_CLOSE_TRAILING_STOP"
+                self.mock_position = 0
+                self.mock_lowest_price = 0.0
+                self.trade_count += 1
+            elif signal == 1:
+                exit_price = price
+                return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
+                action = "SHORT_CLOSE_LONG_OPEN"
+                self.mock_position = 1
+                self.mock_entry_price = price
+                self.mock_lowest_price = price  # 重新初始化
+                self.mock_highest_price = price  # 重新初始化
+                self.trade_count += 1
         else:
-            if self.mock_position == 1:
-                if trailing_stop_triggered:
-                    exit_price = price
-                    return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
-                    action = "LONG_CLOSE_TRAILING_STOP"
-                    self.mock_position = 0
-                    self.mock_highest_price = 0.0
-                    self.trade_count += 1
-                elif signal == -1:
-                    exit_price = price
-                    return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
-                    action = "LONG_CLOSE_SHORT_OPEN"
-                    self.mock_position = -1
-                    self.mock_entry_price = price
-                    self.mock_highest_price = price  # 重新初始化
-                    self.mock_lowest_price = price  # 重新初始化
-                    self.trade_count += 1
-            elif self.mock_position == -1:
-                if trailing_stop_triggered:
-                    exit_price = price
-                    return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
-                    action = "SHORT_CLOSE_TRAILING_STOP"
-                    self.mock_position = 0
-                    self.mock_lowest_price = 0.0
-                    self.trade_count += 1
-                elif signal == 1:
-                    exit_price = price
-                    return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
-                    action = "SHORT_CLOSE_LONG_OPEN"
-                    self.mock_position = 1
-                    self.mock_entry_price = price
-                    self.mock_lowest_price = price  # 重新初始化
-                    self.mock_highest_price = price  # 重新初始化
-                    self.trade_count += 1
+            raise ValueError(f"mock position is invalid: {self.mock_position}")
 
         if action != "HOLD":
             # 记录模拟交易数据（始终记录）
@@ -227,7 +313,7 @@ class StrategyMonitor(Strategy1Monitor):
         mode_text = "真实交易" if self.trade_mode else "模拟监控"
         logger.info(f"开始{mode_text} {self.symbol} 的EMA交叉策略...")
         logger.info(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
-                    f"成交量倍数={self.vol_multiplier}, 确认百分比={self.confirmation_pct}%, "
+                    f"成交量倍数={self.params.get('vol_multiplier', 1.2)}, 确认百分比={self.params.get('confirmation_pct', 0.2)}%, "
                     f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%, "
                     f"辅助条件={self.assist_cond if self.assist_cond else '无'}")
 
@@ -245,12 +331,12 @@ class StrategyMonitor(Strategy1Monitor):
                 try:
                     signal = self.strategy.calculate_ema_crossover_signal(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.vol_multiplier, self.confirmation_pct, self.mode, self.assist_cond, **self.params
+                        self.mode, self.assist_cond, **self.params
                     )
 
                     details = self.strategy.get_strategy_details(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.vol_multiplier, self.confirmation_pct, self.mode, self.assist_cond, **self.params
+                        self.mode, self.assist_cond, **self.params
                     )
 
                     price = details.get('current_price', 0)
@@ -352,17 +438,22 @@ def get_user_input(default_config: dict = None) -> dict:
 
         # 根据选择的辅助条件动态获取对应的技术指标参数
         params = default_params.copy()  # 复制默认参数
-        vol_multiplier = default_config.get('vol_multiplier', 1.2)
+        
+        # 设置默认的成交量参数
+        default_vol_multiplier = default_config.get('vol_multiplier', 1.2)
+        default_confirmation_pct = default_config.get('confirmation_pct', 0.2)
+        
+        # 无论使用什么辅助条件，都设置成交量参数
+        vol_multiplier_input = input(f"请输入成交量放大倍数 (默认 {default_vol_multiplier}): ").strip()
+        params['vol_multiplier'] = float(vol_multiplier_input) if vol_multiplier_input else default_vol_multiplier
+        
+        confirmation_pct_input = input(f"请输入确认突破百分比 (默认 {default_confirmation_pct}%): ").strip()
+        params['confirmation_pct'] = float(confirmation_pct_input) if confirmation_pct_input else default_confirmation_pct
 
         if assist_cond == 'rsi':
             default_rsi_period = default_params.get('rsi_period', 9)
             rsi_period_input = input(f"请输入RSI周期 (默认 {default_rsi_period}): ").strip()
             params['rsi_period'] = int(rsi_period_input) if rsi_period_input else default_rsi_period
-        elif assist_cond == 'volume':
-            # 可以在这里添加成交量相关的参数输入
-            default_vol_multiplier = default_config.get('vol_multiplier', 1.2)
-            vol_multiplier_input = input(f"请输入成交量放大倍数 (默认 {default_vol_multiplier}): ").strip()
-            vol_multiplier = float(vol_multiplier_input) if vol_multiplier_input else default_vol_multiplier
 
         trade_amount = default_trade_amount
         trade_mode = default_trade_mode
@@ -407,8 +498,6 @@ def get_user_input(default_config: dict = None) -> dict:
         'bar': bar,
         'short_ma': default_config.get('short_ma', 5),
         'long_ma': default_config.get('long_ma', 20),
-        'vol_multiplier': vol_multiplier,
-        'confirmation_pct': default_config.get('confirmation_pct', 0.2),
         'mode': mode,
         'trailing_stop_pct': trailing_stop_pct,
         'trade': trade,
@@ -447,8 +536,6 @@ def main():
     bar = config.get('bar', '1m')
     short_ma = config.get('short_ma', 5)
     long_ma = config.get('long_ma', 20)
-    vol_multiplier = config.get('vol_multiplier', 1.2)
-    confirmation_pct = config.get('confirmation_pct', 0.2)
     mode = config.get('mode', 'loose')
     trailing_stop_pct = config.get('trailing_stop_pct', 1.0)
     trade = config.get('trade', False)
@@ -464,8 +551,6 @@ def main():
         bar=bar,
         short_ma=short_ma,
         long_ma=long_ma,
-        vol_multiplier=vol_multiplier,
-        confirmation_pct=confirmation_pct,
         mode=mode,
         trailing_stop_pct=trailing_stop_pct,
         trade=trade,

@@ -75,3 +75,34 @@ class AccountData:
     balances: List[Balance]
     orders: List[Order]
     timestamp: int
+
+
+@dataclass
+class Instrument:
+    """Instrument information data"""
+    instId: str                    # Instrument ID
+    uly: str = ""                   # Underlying asset
+    category: str = ""             # Instrument category
+    baseCcy: str = ""              # Base currency
+    quoteCcy: str = ""             # Quote currency
+    settleCcy: str = ""            # Settlement currency
+    ctVal: float = 0.0             # Contract value
+    ctMult: float = 0.0            # Contract multiplier
+    ctValCcy: str = ""             # Contract value currency
+    optType: str = ""              # Option type (C: call, P: put)
+    stk: float = 0.0               # Strike price
+    listTime: int = 0              # Listing time
+    expTime: int = 0               # Expiry time
+    lever: float = 0.0             # Leverage
+    tickSz: float = 0.0            # Tick size
+    lotSz: float = 0.0             # Lot size
+    minSz: float = 0.0             # Minimum order size
+    ctType: str = ""               # Contract type
+    alias: str = ""                # Alias
+    state: str = ""                # Instrument state
+    maxLmtSz: float = 0.0          # Maximum limit order size
+    maxMktSz: float = 0.0          # Maximum market order size
+    maxTwapSz: float = 0.0         # Maximum TWAP order size
+    maxIcebergSz: float = 0.0      # Maximum iceberg order size
+    maxTriggerSz: float = 0.0      # Maximum trigger order size
+    maxStopSz: float = 0.0         # Maximum stop order size

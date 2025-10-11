@@ -171,12 +171,14 @@ class Strategy1Monitor(BaseMonitor):
                 try:
                     signal = self.strategy.calculate_ema_crossover_signal(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.vol_multiplier, self.confirmation_pct, self.mode
+                        self.mode, self.assist_cond,
+                        vol_multiplier=self.vol_multiplier, confirmation_pct=self.confirmation_pct, **self.params
                     )
                     
                     details = self.strategy.get_strategy_details(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.vol_multiplier, self.confirmation_pct, self.mode
+                        self.mode, self.assist_cond,
+                        vol_multiplier=self.vol_multiplier, confirmation_pct=self.confirmation_pct, **self.params
                     )
                     
                     price = details.get('current_price', 0)

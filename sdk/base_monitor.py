@@ -73,10 +73,6 @@ class BaseMonitor(ABC):
         self._init_csv_files()
         self._restore_state()
         
-        # 如果真实交易模式，同步真实仓位到模拟仓位
-        if trade_mode:
-            self._sync_real_position()
-        
         # 使用两个独立的写入队列
         self.mock_write_queue = []
         self.real_write_queue = []
@@ -128,31 +124,36 @@ class BaseMonitor(ABC):
                 logger.info(f"使用现有真实备份文件: {self.real_backup_file}")
     
     def _restore_state(self):
-        """Restore latest mock position state from CSV file"""
+        """Restore position state based on trade mode"""
         try:
-            # 从模拟交易文件恢复状态
-            if os.path.exists(self.mock_csv_file) and os.path.getsize(self.mock_csv_file) > 0:
-                df = pd.read_csv(self.mock_csv_file)
-                if not df.empty:
-                    last_record = df.iloc[-1]
-                    self.mock_position = int(last_record['position'])
-                    self.mock_entry_price = float(last_record['entry_price'])
-                    self.trade_count = len(df[df['action'] != 'HOLD'])
-                    
-                    if self.mock_position == 1:
-                        self.mock_highest_price = self.mock_entry_price
-                        self.mock_lowest_price = self.mock_entry_price
-                    elif self.mock_position == -1:
-                        self.mock_lowest_price = self.mock_entry_price
-                        self.mock_highest_price = self.mock_entry_price
-                    else:
-                        self.mock_highest_price = 0.0
-                        self.mock_lowest_price = 0.0
-                    logger.info(f"模拟状态已从文件恢复: position={self.mock_position}, entry_price={self.mock_entry_price:.4f}, trade_count={self.trade_count}")
-                else:
-                    logger.info("模拟CSV文件为空，使用初始状态")
+            if self.trade_mode:
+                # 真实交易模式：从API查询真实持仓
+                self._sync_real_position()
+                logger.info(f"真实交易模式：从API同步真实持仓, position={self.mock_position}, entry_price={self.mock_entry_price:.4f}")
             else:
-                logger.info("未找到模拟历史记录，使用初始状态")
+                # 模拟交易模式：从CSV文件恢复状态
+                if os.path.exists(self.mock_csv_file) and os.path.getsize(self.mock_csv_file) > 0:
+                    df = pd.read_csv(self.mock_csv_file)
+                    if not df.empty:
+                        last_record = df.iloc[-1]
+                        self.mock_position = int(last_record['position'])
+                        self.mock_entry_price = float(last_record['entry_price'])
+                        self.trade_count = len(df[df['action'] != 'HOLD'])
+                        
+                        if self.mock_position == 1:
+                            self.mock_highest_price = self.mock_entry_price
+                            self.mock_lowest_price = self.mock_entry_price
+                        elif self.mock_position == -1:
+                            self.mock_lowest_price = self.mock_entry_price
+                            self.mock_highest_price = self.mock_entry_price
+                        else:
+                            self.mock_highest_price = 0.0
+                            self.mock_lowest_price = 0.0
+                        logger.info(f"模拟状态已从文件恢复: position={self.mock_position}, entry_price={self.mock_entry_price:.4f}, trade_count={self.trade_count}")
+                    else:
+                        logger.info("模拟CSV文件为空，使用初始状态")
+                else:
+                    logger.info("未找到模拟历史记录，使用初始状态")
         except Exception as e:
             logger.error(f"恢复状态失败，使用初始状态: {e}")
     
@@ -205,8 +206,9 @@ class BaseMonitor(ABC):
                 logger.warning("无法获取trader实例，无法同步真实仓位")
                 
         except Exception as e:
-            logger.error(f"同步真实仓位失败: {e}")
-            logger.info("保持当前模拟仓位状态")
+            logger.warning(f"⚠️  同步真实仓位失败: {e}")
+            logger.warning(f"⚠️  无法获取真实仓位信息，将使用模拟仓位状态")
+            logger.warning(f"⚠️  如果真实账户有仓位，请确保网络连接正常")
     
     def _background_writer(self):
         """Background writer thread"""
@@ -319,6 +321,7 @@ class BaseMonitor(ABC):
         """Execute trade based on signal"""
         pass
     
+
     @abstractmethod
     def run(self):
         """Run monitoring loop"""
