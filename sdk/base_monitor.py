@@ -13,6 +13,11 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.logger import logger
+
 
 class BaseMonitor(ABC):
     """Base class for strategy monitoring"""
@@ -46,8 +51,9 @@ class BaseMonitor(ABC):
         self.trade_count = 0
         
         # 确保 tracking_data 根目录存在
-        if not os.path.exists("tracking_data"):
-            os.makedirs("tracking_data")
+        tracking_data_root = "tracking_data"
+        if not os.path.exists(tracking_data_root):
+            os.makedirs(tracking_data_root)
         
         # 初始化模拟交易数据记录
         if not os.path.exists(self.mock_data_dir):
@@ -75,10 +81,10 @@ class BaseMonitor(ABC):
         self.writer_thread = threading.Thread(target=self._background_writer, daemon=True)
         self.writer_thread.start()
         
-        print(f"监控器已初始化: {symbol}")
-        print(f"模拟记录文件: {self.mock_csv_file}")
+        logger.info(f"监控器已初始化: {symbol}")
+        logger.info(f"模拟记录文件: {self.mock_csv_file}")
         if trade_mode:
-            print(f"真实记录文件: {self.real_csv_file}")
+            logger.info(f"真实记录文件: {self.real_csv_file}")
     
     def _init_csv_files(self):
         """Initialize CSV files if not exists"""
@@ -88,16 +94,16 @@ class BaseMonitor(ABC):
         if not os.path.exists(self.mock_csv_file):
             df = pd.DataFrame(columns=mock_headers)
             df.to_csv(self.mock_csv_file, index=False)
-            print(f"创建新的模拟记录文件: {self.mock_csv_file}")
+            logger.info(f"创建新的模拟记录文件: {self.mock_csv_file}")
         else:
-            print(f"使用现有模拟记录文件: {self.mock_csv_file}")
+            logger.info(f"使用现有模拟记录文件: {self.mock_csv_file}")
         
         if not os.path.exists(self.mock_backup_file):
             df = pd.DataFrame(columns=mock_headers)
             df.to_csv(self.mock_backup_file, index=False)
-            print(f"创建新的模拟备份文件: {self.mock_backup_file}")
+            logger.info(f"创建新的模拟备份文件: {self.mock_backup_file}")
         else:
-            print(f"使用现有模拟备份文件: {self.mock_backup_file}")
+            logger.info(f"使用现有模拟备份文件: {self.mock_backup_file}")
         
         # 初始化真实交易CSV文件（仅在trade_mode=True时）
         if self.trade_mode:
@@ -105,16 +111,16 @@ class BaseMonitor(ABC):
             if not os.path.exists(self.real_csv_file):
                 df = pd.DataFrame(columns=real_headers)
                 df.to_csv(self.real_csv_file, index=False)
-                print(f"创建新的真实记录文件: {self.real_csv_file}")
+                logger.info(f"创建新的真实记录文件: {self.real_csv_file}")
             else:
-                print(f"使用现有真实记录文件: {self.real_csv_file}")
+                logger.info(f"使用现有真实记录文件: {self.real_csv_file}")
             
             if not os.path.exists(self.real_backup_file):
                 df = pd.DataFrame(columns=real_headers)
                 df.to_csv(self.real_backup_file, index=False)
-                print(f"创建新的真实备份文件: {self.real_backup_file}")
+                logger.info(f"创建新的真实备份文件: {self.real_backup_file}")
             else:
-                print(f"使用现有真实备份文件: {self.real_backup_file}")
+                logger.info(f"使用现有真实备份文件: {self.real_backup_file}")
     
     def _restore_state(self):
         """Restore latest mock position state from CSV file"""
@@ -137,13 +143,13 @@ class BaseMonitor(ABC):
                     else:
                         self.mock_highest_price = 0.0
                         self.mock_lowest_price = 0.0
-                    print(f"模拟状态已从文件恢复: position={self.mock_position}, entry_price={self.mock_entry_price:.4f}, trade_count={self.trade_count}")
+                    logger.info(f"模拟状态已从文件恢复: position={self.mock_position}, entry_price={self.mock_entry_price:.4f}, trade_count={self.trade_count}")
                 else:
-                    print("模拟CSV文件为空，使用初始状态")
+                    logger.info("模拟CSV文件为空，使用初始状态")
             else:
-                print("未找到模拟历史记录，使用初始状态")
+                logger.info("未找到模拟历史记录，使用初始状态")
         except Exception as e:
-            print(f"恢复状态失败，使用初始状态: {e}")
+            logger.error(f"恢复状态失败，使用初始状态: {e}")
     
     def _background_writer(self):
         """Background writer thread"""
@@ -173,7 +179,7 @@ class BaseMonitor(ABC):
                 
                 time.sleep(1)
             except Exception as e:
-                print(f"后台写入线程错误: {e}")
+                logger.error(f"后台写入线程错误: {e}")
                 time.sleep(5)
     
     def _enqueue_mock_write(self, data: Dict[str, Any]):
@@ -187,7 +193,7 @@ class BaseMonitor(ABC):
             with self.write_lock:
                 self.real_write_queue.append(data)
         else:
-            print("警告: 尝试记录真实交易数据，但trade_mode=False")
+            logger.warning("尝试记录真实交易数据，但trade_mode=False")
     
     def _get_next_bar_timestamp(self) -> int:
         """Get next K-line timestamp"""
@@ -222,7 +228,7 @@ class BaseMonitor(ABC):
         wait_time = (next_timestamp - current_timestamp) / 1000.0
         
         if wait_time > 0:
-            print(f"等待 {wait_time:.1f} 秒到下一个K线时间点...")
+            logger.info(f"等待 {wait_time:.1f} 秒到下一个K线时间点...")
             time.sleep(wait_time)
     
     @abstractmethod

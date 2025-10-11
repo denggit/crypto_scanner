@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 
 from sdk.base_trader import BaseTrader
 from okx_api.trader import Trader
+from utils.logger import logger
 
 
 class Strategy1Trader(BaseTrader):
@@ -80,17 +81,17 @@ class Strategy1Trader(BaseTrader):
             )
             
             if result_long.get('code') == '0' and result_short.get('code') == '0':
-                print(f"✅ 杠杆设置成功: {inst_id} {self.leverage}x {mgn_mode}")
+                logger.info(f"✅ 杠杆设置成功: {inst_id} {self.leverage}x {mgn_mode}")
                 self.leverage_setup_done[inst_id] = True
                 return True
             elif result_long.get('code') != '0':
-                print(f"⚠️  开多杠杆设置失败: {result_long.get('msg', 'Unknown error')}")
+                logger.warning(f"⚠️  开多杠杆设置失败: {result_long.get('msg', 'Unknown error')}")
                 return False
             elif result_short.get('code') != '0':
-                print(f"⚠️  开空杠杆设置失败: {result_short.get('msg', 'Unknown error')}")
+                logger.warning(f"⚠️  开空杠杆设置失败: {result_short.get('msg', 'Unknown error')}")
                 return False
         except Exception as e:
-            print(f"⚠️  杠杆设置异常: {e}")
+            logger.error(f"⚠️  杠杆设置异常: {e}")
             return False
     
     def execute_open_long(self, symbol: str, price: float) -> Optional[any]:
@@ -106,7 +107,7 @@ class Strategy1Trader(BaseTrader):
         """
         # 强制设置杠杆（只在第一次需要）
         if not self.setup_leverage(symbol):
-            print(f"❌ {symbol} 杠杆设置失败，取消开多交易")
+            logger.error(f"❌ {symbol} 杠杆设置失败，取消开多交易")
             return None
         
         inst_id = self._get_inst_id(symbol)
@@ -134,7 +135,7 @@ class Strategy1Trader(BaseTrader):
         """
         # 强制设置杠杆（只在第一次需要）
         if not self.setup_leverage(symbol):
-            print(f"❌ {symbol} 杠杆设置失败，取消开空交易")
+            logger.error(f"❌ {symbol} 杠杆设置失败，取消开空交易")
             return None
         
         inst_id = self._get_inst_id(symbol)

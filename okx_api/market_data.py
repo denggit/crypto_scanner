@@ -6,6 +6,7 @@ import pandas as pd
 
 from .client import OKXClient
 from .models import Ticker, OrderBook, Candle, MarketData
+from utils.logger import logger
 
 
 class MarketDataRetriever:
@@ -297,7 +298,7 @@ class MarketDataRetriever:
                 # Add delay to respect rate limits
                 time.sleep(0.1)
             except Exception as e:
-                print(f"Error fetching data for {instId}: {e}")
+                logger.error(f"Error fetching data for {instId}: {e}")
                 continue
 
         return all_data

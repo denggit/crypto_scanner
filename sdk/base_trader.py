@@ -7,6 +7,10 @@
 
 from abc import ABC, abstractmethod
 from typing import Optional
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.logger import logger
 
 
 class BaseTrader(ABC):
@@ -138,41 +142,41 @@ class BaseTrader(ABC):
             if action in ["LONG_OPEN", "SHORT_CLOSE_LONG_OPEN"]:
                 order = self.execute_open_long(symbol, price)
                 if order:
-                    print(f"✅ [真实交易] {symbol} 做多成功: 订单ID={order.ordId}, 价格={price:.4f}")
+                    logger.info(f"✅ [真实交易] {symbol} 做多成功: 订单ID={order.ordId}, 价格={price:.4f}")
                     return True
                 else:
-                    print(f"❌ [真实交易] {symbol} 做多失败")
+                    logger.error(f"❌ [真实交易] {symbol} 做多失败")
                     return False
                     
             elif action in ["SHORT_OPEN", "LONG_CLOSE_SHORT_OPEN"]:
                 order = self.execute_open_short(symbol, price)
                 if order:
-                    print(f"✅ [真实交易] {symbol} 做空成功: 订单ID={order.ordId}, 价格={price:.4f}")
+                    logger.info(f"✅ [真实交易] {symbol} 做空成功: 订单ID={order.ordId}, 价格={price:.4f}")
                     return True
                 else:
-                    print(f"❌ [真实交易] {symbol} 做空失败")
+                    logger.error(f"❌ [真实交易] {symbol} 做空失败")
                     return False
                     
             elif action in ["LONG_CLOSE_TRAILING_STOP"]:
                 order = self.execute_close_long(symbol, price)
                 if order:
-                    print(f"✅ [真实交易] {symbol} 平多成功: 订单ID={order.ordId}")
+                    logger.info(f"✅ [真实交易] {symbol} 平多成功: 订单ID={order.ordId}")
                     return True
                 else:
-                    print(f"❌ [真实交易] {symbol} 平多失败")
+                    logger.error(f"❌ [真实交易] {symbol} 平多失败")
                     return False
                     
             elif action in ["SHORT_CLOSE_TRAILING_STOP"]:
                 order = self.execute_close_short(symbol, price)
                 if order:
-                    print(f"✅ [真实交易] {symbol} 平空成功: 订单ID={order.ordId}")
+                    logger.info(f"✅ [真实交易] {symbol} 平空成功: 订单ID={order.ordId}")
                     return True
                 else:
-                    print(f"❌ [真实交易] {symbol} 平空失败")
+                    logger.error(f"❌ [真实交易] {symbol} 平空失败")
                     return False
                     
         except Exception as e:
-            print(f"❌ [真实交易] {symbol} 执行交易时出错: {e}")
+            logger.error(f"❌ [真实交易] {symbol} 执行交易时出错: {e}")
             return False
         
         return False

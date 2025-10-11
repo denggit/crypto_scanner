@@ -15,6 +15,7 @@ from sdk.base_monitor import BaseMonitor
 from okx_api.client import OKXClient
 from okx_api.market_data import MarketDataRetriever
 from strategies.strategy_1.strategy_1 import EMACrossoverStrategy
+from utils.logger import logger
 
 
 class Strategy1Monitor(BaseMonitor):
@@ -153,13 +154,13 @@ class Strategy1Monitor(BaseMonitor):
             
             self._enqueue_write(record)
             
-            print(f"[模拟交易] [{record['timestamp']}] {self.symbol} {action}: "
+            logger.info(f"[模拟交易] [{record['timestamp']}] {self.symbol} {action}: "
                   f"价格={price:.4f}, 信号={signal}, 收益率={return_rate*100:.2f}%")
     
     def run(self):
         """Run monitoring loop"""
-        print(f"开始模拟监控 {self.symbol} 的EMA交叉策略...")
-        print(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
+        logger.info(f"开始模拟监控 {self.symbol} 的EMA交叉策略...")
+        logger.info(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
               f"成交量倍数={self.vol_multiplier}, 确认百分比={self.confirmation_pct}%, "
               f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%")
         
@@ -183,21 +184,21 @@ class Strategy1Monitor(BaseMonitor):
                     if price > 0:
                         self.execute_trade(signal, price, details)
                         
-                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                        logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
                               f"{self.symbol} 价格: {price:.4f}, 信号: {signal}, "
                               f"仓位: {self.position}, 交易次数: {self.trade_count}")
                     else:
-                        print(f"无法获取 {self.symbol} 的价格数据")
+                        logger.warning(f"无法获取 {self.symbol} 的价格数据")
                 
                 except Exception as e:
-                    print(f"计算信号时出错: {e}")
+                    logger.error(f"计算信号时出错: {e}")
                     import time
                     time.sleep(5)
                 
         except KeyboardInterrupt:
-            print("\n监控已停止")
-            print(f"总交易次数: {self.trade_count}")
-            print(f"记录文件: {self.csv_file}")
-            print(f"备份文件: {self.backup_file}")
+            logger.info("监控已停止")
+            logger.info(f"总交易次数: {self.trade_count}")
+            logger.info(f"记录文件: {self.csv_file}")
+            logger.info(f"备份文件: {self.backup_file}")
         except Exception as e:
-            print(f"监控过程中出错: {e}")
+            logger.error(f"监控过程中出错: {e}")

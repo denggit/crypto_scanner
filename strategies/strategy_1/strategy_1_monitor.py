@@ -18,6 +18,7 @@ from strategies.strategy_1.methods.trader import Strategy1Trader
 from okx_api.client import OKXClient
 from okx_api.market_data import MarketDataRetriever
 from strategies.strategy_1.strategy_1 import EMACrossoverStrategy
+from utils.logger import logger
 
 
 class StrategyMonitor(Strategy1Monitor):
@@ -200,23 +201,23 @@ class StrategyMonitor(Strategy1Monitor):
                     self._enqueue_real_write(real_record)
             
             mode_prefix = self.get_mode_prefix()
-            print(f"{mode_prefix} [{mock_record['timestamp']}] {self.symbol} {action}: "
+            logger.info(f"{mode_prefix} [{mock_record['timestamp']}] {self.symbol} {action}: "
                   f"价格={price:.4f}, 信号={signal}, 收益率={return_rate*100:.2f}%")
     
     def run(self):
         """Run monitoring loop with unified mock/real trading logic"""
         mode_text = "真实交易" if self.trade_mode else "模拟监控"
-        print(f"开始{mode_text} {self.symbol} 的EMA交叉策略...")
-        print(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
+        logger.info(f"开始{mode_text} {self.symbol} 的EMA交叉策略...")
+        logger.info(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
               f"成交量倍数={self.vol_multiplier}, 确认百分比={self.confirmation_pct}%, "
               f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%")
         
         if self.trade_mode:
             trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}
-            print(f"交易模式: {trade_mode_names.get(self.trade_mode_setting, '未知')}, "
+            logger.info(f"交易模式: {trade_mode_names.get(self.trade_mode_setting, '未知')}, "
                   f"每次交易金额: {self.trade_amount} USDT")
             if self.trade_mode_setting in [2, 3]:
-                print(f"杠杆倍数: {self.leverage}x")
+                logger.info(f"杠杆倍数: {self.leverage}x")
         
         try:
             while True:
@@ -238,37 +239,37 @@ class StrategyMonitor(Strategy1Monitor):
                     if price > 0:
                         self.execute_trade(signal, price, details)
                         
-                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                        logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
                               f"{self.symbol} 价格: {price:.4f}, 信号: {signal}, "
                               f"模拟仓位: {self.mock_position}, 交易次数: {self.trade_count}")
                     else:
-                        print(f"无法获取 {self.symbol} 的价格数据")
+                        logger.warning(f"无法获取 {self.symbol} 的价格数据")
                 
                 except Exception as e:
-                    print(f"计算信号时出错: {e}")
+                    logger.error(f"计算信号时出错: {e}")
                     import time
                     time.sleep(5)
                 
         except KeyboardInterrupt:
-            print("\n监控已停止")
-            print(f"总交易次数: {self.trade_count}")
-            print(f"模拟记录文件: {self.mock_csv_file}")
-            print(f"模拟备份文件: {self.mock_backup_file}")
+            logger.info("监控已停止")
+            logger.info(f"总交易次数: {self.trade_count}")
+            logger.info(f"模拟记录文件: {self.mock_csv_file}")
+            logger.info(f"模拟备份文件: {self.mock_backup_file}")
             if self.trade_mode:
-                print(f"真实记录文件: {self.real_csv_file}")
-                print(f"真实备份文件: {self.real_backup_file}")
+                logger.info(f"真实记录文件: {self.real_csv_file}")
+                logger.info(f"真实备份文件: {self.real_backup_file}")
         except Exception as e:
-            print(f"监控过程中出错: {e}")
+            logger.error(f"监控过程中出错: {e}")
 
 
 def main():
     """主函数"""
-    print("EMA交叉策略实盘模拟监控系统")
-    print("=" * 50)
+    logger.info("EMA交叉策略实盘模拟监控系统")
+    logger.info("=" * 50)
     
     symbol = input("请输入交易对 (默认 BTC-USDT): ").strip() or "BTC-USDT"
     bar = input("请输入K线周期 (默认 1m): ").strip() or "1m"
-    mode = input("请输入模式 (strict/loose, 默认 strict): ").strip() or "strict"
+    mode = input("请输入模式 (strict/loose, 默认 loose): ").strip() or "loose"
     trailing_stop_input = input("请输入移动止损百分比 (默认 1.0%): ").strip()
     trailing_stop_pct = float(trailing_stop_input) if trailing_stop_input else 1.0
     trade_input = input("是否真实交易 (y/n, 默认 n): ").strip().lower()
@@ -282,10 +283,10 @@ def main():
         trade_amount_input = input("请输入每次交易的USDT金额 (默认 10.0): ").strip()
         trade_amount = float(trade_amount_input) if trade_amount_input else 10.0
         
-        print("\n交易模式选择:")
-        print("1. 现货模式")
-        print("2. 全仓杠杆模式")
-        print("3. 逐仓杠杆模式 (默认)")
+        logger.info("交易模式选择:")
+        logger.info("1. 现货模式")
+        logger.info("2. 全仓杠杆模式")
+        logger.info("3. 逐仓杠杆模式 (默认)")
         trade_mode_input = input("请选择交易模式 (1/2/3, 默认 3): ").strip()
         trade_mode = int(trade_mode_input) if trade_mode_input in ['1', '2', '3'] else 3
         

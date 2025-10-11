@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from utils.logger import logger
+
 from okx_api.client import OKXClient
 from okx_api.market_data import MarketDataRetriever
 from tools.technical_indicators import sma, ema, rsi, macd, atr
@@ -68,9 +70,9 @@ class CryptoScanner:
 
             return top_coins
         except Exception as e:
-            print(f"Error scanning top coins: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning top coins: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return []
 
     def scan_ma_alignment(self, currency: str = 'USDT', ma_periods: list = None,
@@ -101,16 +103,16 @@ class CryptoScanner:
         try:
             # Use provided symbols if available, otherwise get volume filtered symbols
             if symbols is not None and len(symbols) > 0:
-                print(f"Scanning {len(symbols)} provided symbols")
+                logger.info(f"Scanning {len(symbols)} provided symbols")
             else:
                 # Get symbols filtered by volume
                 symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
 
                 if not symbols:
-                    print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                    logger.warning(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
                     return []
 
-                print(f"Scanning {len(symbols)} symbols with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                logger.info(f"Scanning {len(symbols)} symbols with 24h volume >= {min_vol_ccy:,.0f} {currency}")
 
             if use_parallel and len(symbols) > 1:
                 return self._scan_ma_alignment_parallel(symbols, ma_periods, bar, limit)
@@ -118,9 +120,9 @@ class CryptoScanner:
                 return self._scan_ma_alignment_sequential(symbols, ma_periods, bar, limit)
 
         except Exception as e:
-            print(f"Error scanning MA alignment: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning MA alignment: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return []
 
     def _scan_ma_alignment_sequential(self, symbols: list, ma_periods: list, bar: str, limit: int) -> list:
@@ -266,7 +268,7 @@ class CryptoScanner:
             return filtered_symbols
 
         except Exception as e:
-            print(f"Error getting volume filtered symbols: {e}")
+            logger.error(f"Error getting volume filtered symbols: {e}")
             # Fallback to basic symbol list without volume filtering
             return self._get_cached_symbols(currency, use_cache)
 
@@ -321,9 +323,9 @@ class CryptoScanner:
                 'periods': len(candles)
             }
         except Exception as e:
-            print(f"Error scanning volatility for {symbol}: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning volatility for {symbol}: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return {}
 
     def scan_liquidity(self, symbol: str, depth: int = 10) -> dict:
@@ -361,9 +363,9 @@ class CryptoScanner:
                 'best_ask': best_ask
             }
         except Exception as e:
-            print(f"Error scanning liquidity for {symbol}: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning liquidity for {symbol}: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return {}
 
     def scan_ma_convergence_breakout(self, currency: str = 'USDT', ma_periods: list = None,
@@ -402,10 +404,10 @@ class CryptoScanner:
             symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
 
             if not symbols:
-                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                logger.warning(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
                 return []
 
-            print(f"Scanning {len(symbols)} symbols for MA convergence + breakout patterns")
+            logger.info(f"Scanning {len(symbols)} symbols for MA convergence + breakout patterns")
 
             if use_parallel and len(symbols) > 1:
                 return self._scan_ma_convergence_breakout_parallel(
@@ -417,9 +419,9 @@ class CryptoScanner:
                 )
 
         except Exception as e:
-            print(f"Error scanning MA convergence breakout: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning MA convergence breakout: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return []
 
     def _scan_ma_convergence_breakout_sequential(self, symbols: list, ma_periods: list,
@@ -647,7 +649,7 @@ class CryptoScanner:
             }
 
         except Exception as e:
-            print(f"Error calculating trailing stop for {instId}: {e}")
+            logger.error(f"Error calculating trailing stop for {instId}: {e}")
             return None
 
     def scan_momentum_early(self, currency: str = 'USDT', bar: str = '5m',
@@ -683,10 +685,10 @@ class CryptoScanner:
             symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
 
             if not symbols:
-                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                logger.warning(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
                 return []
 
-            print(f"Scanning {len(symbols)} symbols for early momentum patterns")
+            logger.info(f"Scanning {len(symbols)} symbols for early momentum patterns")
 
             # 需要足够的数据计算指标
             limit = 50  # 50根K线用于计算RSI、MACD、MA等
@@ -701,9 +703,9 @@ class CryptoScanner:
                 )
 
         except Exception as e:
-            print(f"Error scanning early momentum: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning early momentum: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return []
 
     def _scan_momentum_early_sequential(self, symbols: list, bar: str, limit: int,
@@ -880,10 +882,10 @@ class CryptoScanner:
             symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
 
             if not symbols:
-                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                logger.warning(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
                 return []
 
-            print(f"Scanning {len(symbols)} symbols for volume breakout patterns")
+            logger.info(f"Scanning {len(symbols)} symbols for volume breakout patterns")
 
             # 需要足够的数据计算突破
             limit = base_periods + recent_periods + 5
@@ -898,9 +900,9 @@ class CryptoScanner:
                 )
 
         except Exception as e:
-            print(f"Error scanning volume breakout: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning volume breakout: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return []
 
     def _scan_volume_breakout_sequential(self, symbols: list, bar: str, limit: int,
@@ -1040,7 +1042,7 @@ class CryptoScanner:
 
         except Exception as e:
             # 可以在这里记录日志用于调试
-            # print(f"Error analyzing {symbol}: {e}")
+            # logger.error(f"Error analyzing {symbol}: {e}")
             return None
 
         return None
@@ -1078,10 +1080,10 @@ class CryptoScanner:
             symbols = self._get_volume_filtered_symbols(currency, min_vol_ccy, use_cache)
 
             if not symbols:
-                print(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
+                logger.warning(f"No symbols found with 24h volume >= {min_vol_ccy:,.0f} {currency}")
                 return []
 
-            print(f"Scanning {len(symbols)} symbols for slope acceleration patterns")
+            logger.info(f"Scanning {len(symbols)} symbols for slope acceleration patterns")
 
             if use_parallel and len(symbols) > 1:
                 return self._scan_slope_acceleration_parallel(symbols, ma_periods, bar, limit, rsi_filter_enabled)
@@ -1089,9 +1091,9 @@ class CryptoScanner:
                 return self._scan_slope_acceleration_sequential(symbols, ma_periods, bar, limit, rsi_filter_enabled)
 
         except Exception as e:
-            print(f"Error scanning slope acceleration: {e}")
-            print("This may be due to network connectivity issues or API restrictions.")
-            print("Please check your internet connection and firewall settings.")
+            logger.error(f"Error scanning slope acceleration: {e}")
+            logger.error("This may be due to network connectivity issues or API restrictions.")
+            logger.error("Please check your internet connection and firewall settings.")
             return []
 
     def _scan_slope_acceleration_sequential(self, symbols: list, ma_periods: list,
@@ -1267,10 +1269,10 @@ class CryptoScanner:
 
 
 def main():
-    print("Cryptocurrency Market Scanner")
-    print("=" * 50)
-    print("Note: This tool requires internet connectivity to access OKX API")
-    print("If you encounter connection errors, please check your network settings\n")
+    logger.info("Cryptocurrency Market Scanner")
+    logger.info("=" * 50)
+    logger.info("Note: This tool requires internet connectivity to access OKX API")
+    logger.info("If you encounter connection errors, please check your network settings\n")
 
     # 从环境变量获取API凭证（如果存在）
     import os
@@ -1280,114 +1282,114 @@ def main():
 
     # Initialize client (with auth if credentials are available)
     if api_key and api_secret and passphrase:
-        print("Using authenticated client with API credentials")
+        logger.info("Using authenticated client with API credentials")
         client = OKXClient(api_key=api_key, api_secret=api_secret, passphrase=passphrase)
     else:
-        print("Using public client (no authentication)")
+        logger.info("Using public client (no authentication)")
         client = OKXClient()
 
     scanner = CryptoScanner(client)
 
     # Generate market report
-    print("\nGenerating market report...")
+    logger.info("\nGenerating market report...")
     report = scanner.generate_market_report()
 
-    print(f"\nReport generated at: {report['timestamp']}")
+    logger.info(f"\nReport generated at: {report['timestamp']}")
 
     if not report['top_coins']:
-        print("Warning: Unable to retrieve market data. This may be due to:")
-        print("  1. Network connectivity issues")
-        print("  2. Firewall or proxy restrictions")
-        print("  3. Temporary OKX API unavailability")
-        print("\nPlease check your internet connection and try again.")
+        logger.warning("Warning: Unable to retrieve market data. This may be due to:")
+        logger.warning("  1. Network connectivity issues")
+        logger.warning("  2. Firewall or proxy restrictions")
+        logger.warning("  3. Temporary OKX API unavailability")
+        logger.warning("\nPlease check your internet connection and try again.")
         return
 
-    print("\nTop 10 Cryptocurrencies by Volume:")
-    print("-" * 50)
+    logger.info("\nTop 10 Cryptocurrencies by Volume:")
+    logger.info("-" * 50)
     for coin in report['top_coins']:
-        print(f"{coin['rank']:2d}. {coin['symbol']:10s} | "
+        logger.info(f"{coin['rank']:2d}. {coin['symbol']:10s} | "
               f"Price: ${coin['price']:>10.2f} | "
               f"24h Change: {coin['price_change_24h']:>6.2f}% | "
               f"Volume: ${coin['volume_24h']:>12,.0f}")
 
     # Display MA alignment coins
     if report['ma_alignment_coins']:
-        print("\nBullish Coins (Multi MA Alignment):")
-        print("-" * 50)
+        logger.info("\nBullish Coins (Multi MA Alignment):")
+        logger.info("-" * 50)
         for coin in report['ma_alignment_coins'][:10]:  # Show top 10 bullish coins
-            print(f"{coin['symbol']:12s} | "
+            logger.info(f"{coin['symbol']:12s} | "
                   f"Price: ${coin['price']:>10.2f} | "
                   f"Trend Strength: {coin['trend_strength']:>6.2f}%")
     else:
-        print("\nNo bullish coins found with current criteria.")
+        logger.info("\nNo bullish coins found with current criteria.")
 
     # Display MA convergence breakout coins
     if report['ma_convergence_breakout_coins']:
-        print("\nMA Convergence + Breakout Coins (Trend Start):")
-        print("-" * 50)
+        logger.info("\nMA Convergence + Breakout Coins (Trend Start):")
+        logger.info("-" * 50)
         for coin in report['ma_convergence_breakout_coins'][:10]:  # Show top 10 convergence breakout coins
-            print(f"{coin['symbol']:12s} | "
+            logger.info(f"{coin['symbol']:12s} | "
                   f"Price: ${coin['current_price']:>10.2f} | "
                   f"Convergence: {coin['convergence_ratio']:>5.2f}% | "
                   f"Breakout: {coin['breakout_strength']:>5.2f}%")
     else:
-        print("\nNo MA convergence + breakout coins found with current criteria.")
+        logger.info("\nNo MA convergence + breakout coins found with current criteria.")
 
     # Display momentum early coins
     if report['momentum_early_coins']:
-        print("\nEarly Momentum Coins (RSI/MACD Startup):")
-        print("-" * 50)
+        logger.info("\nEarly Momentum Coins (RSI/MACD Startup):")
+        logger.info("-" * 50)
         for coin in report['momentum_early_coins'][:10]:  # Show top 10 momentum early coins
-            print(f"{coin['symbol']:12s} | "
+            logger.info(f"{coin['symbol']:12s} | "
                   f"Price: ${coin['current_price']:>10.2f} | "
                   f"RSI: {coin['rsi']:>5.1f} | "
                   f"MACD: {coin['macd_histogram']:>7.4f} | "
                   f"Volume: {coin['volume_ratio']:>4.1f}x")
     else:
-        print("\nNo early momentum coins found with current criteria.")
+        logger.info("\nNo early momentum coins found with current criteria.")
 
     # Display volume breakout coins
     if report['volume_breakout_coins']:
-        print("\nVolume Breakout Coins (High Volume + Price Breakout):")
-        print("-" * 50)
+        logger.info("\nVolume Breakout Coins (High Volume + Price Breakout):")
+        logger.info("-" * 50)
         for coin in report['volume_breakout_coins'][:10]:  # Show top 10 volume breakout coins
-            print(f"{coin['symbol']:12s} | "
+            logger.info(f"{coin['symbol']:12s} | "
                   f"Price: ${coin['current_price']:>10.2f} | "
                   f"Volume: {coin['volume_ratio']:>4.1f}x | "
                   f"Breakout: {coin['price_breakout_ratio']:>5.2f}%")
     else:
-        print("\nNo volume breakout coins found with current criteria.")
+        logger.info("\nNo volume breakout coins found with current criteria.")
 
     # Display slope acceleration coins
     if report['slope_acceleration_coins']:
-        print("\nSlope Acceleration Coins (Trend Just Starting to Accelerate):")
-        print("-" * 50)
+        logger.info("\nSlope Acceleration Coins (Trend Just Starting to Accelerate):")
+        logger.info("-" * 50)
         for coin in report['slope_acceleration_coins'][:10]:  # Show top 10 slope acceleration coins
-            print(f"{coin['symbol']:12s} | "
+            logger.info(f"{coin['symbol']:12s} | "
                   f"Price: ${coin['current_price']:>10.2f} | "
                   f"Acceleration: {coin['acceleration_strength']:>7.4f} | "
                   f"RSI: {coin['rsi']:>5.1f}")
     else:
-        print("\nNo slope acceleration coins found with current criteria.")
+        logger.info("\nNo slope acceleration coins found with current criteria.")
 
     if report['volatility_data']:
-        print("\nVolatility Analysis (Top 5 coins):")
-        print("-" * 50)
+        logger.info("\nVolatility Analysis (Top 5 coins):")
+        logger.info("-" * 50)
         for vol in report['volatility_data']:
-            print(f"{vol['symbol']:10s} | "
+            logger.info(f"{vol['symbol']:10s} | "
                   f"Volatility: {vol['volatility']:>6.2f} | "
                   f"Avg Change: {vol['avg_price_change']:>6.2f}%")
 
     if report['liquidity_data']:
-        print("\nLiquidity Analysis (Top 5 coins):")
-        print("-" * 50)
+        logger.info("\nLiquidity Analysis (Top 5 coins):")
+        logger.info("-" * 50)
         for liq in report['liquidity_data']:
-            print(f"{liq['symbol']:10s} | "
+            logger.info(f"{liq['symbol']:10s} | "
                   f"Spread: {liq['spread_percent']:>5.2f}% | "
                   f"Bid Volume: {liq['bid_volume']:>10.2f} | "
                   f"Ask Volume: {liq['ask_volume']:>10.2f}")
 
-    print("\n[INFO] For authenticated trading features, set your OKX API credentials in the .env file")
+    logger.info("\n[INFO] For authenticated trading features, set your OKX API credentials in the .env file")
 
 
 if __name__ == "__main__":

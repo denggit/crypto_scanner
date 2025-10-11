@@ -18,6 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from okx_api.client import OKXClient
 from okx_api.market_data import MarketDataRetriever
 from tools.technical_indicators import ema
+from utils.logger import logger
 
 
 class EMACrossoverStrategy:
@@ -159,7 +160,7 @@ class EMACrossoverStrategy:
                 return 0
                 
         except Exception as e:
-            print(f"Error calculating EMA crossover signal for {symbol}: {e}")
+            logger.error(f"Error calculating EMA crossover signal for {symbol}: {e}")
             return 0
 
     def get_strategy_details(self, symbol: str, bar: str = '1m', 
@@ -295,14 +296,14 @@ class EMACrossoverStrategy:
             }
             
         except Exception as e:
-            print(f"Error getting strategies details for {symbol}: {e}")
+            logger.error(f"Error getting strategies details for {symbol}: {e}")
             return {}
 
 
 def main():
     """测试函数"""
-    print("EMA Crossover Strategy Test")
-    print("=" * 50)
+    logger.info("EMA Crossover Strategy Test")
+    logger.info("=" * 50)
     
     # 初始化客户端
     client = OKXClient()
@@ -317,18 +318,18 @@ def main():
             details = strategy.get_strategy_details(symbol, bar='1m', short_ma=5, long_ma=20, vol_multiplier=1.2, confirmation_pct=0.2, mode='strict')
             
             if details:
-                print(f"\n{symbol}:")
-                print(f"  Price: ${details['current_price']:.4f}")
-                print(f"  EMA5: {details['ema5']:.4f}")
-                print(f"  EMA20: {details['ema20']:.4f}")
-                print(f"  EMA20 Slope: {details['ema20_slope']*100:.2f}%")
-                print(f"  Volume Expansion: {details['volume_expansion']}")
-                print(f"  Bullish Crossover: {details['ema_bullish_crossover']}")
-                print(f"  Bearish Crossover: {details['ema_bearish_crossover']}")
-                print(f"  Price Above EMA5: {details['price_above_ema5']}")
-                print(f"  Signal: {signal} ({'BUY' if signal == 1 else 'SELL' if signal == -1 else 'HOLD'})")
+                logger.info(f"\n{symbol}:")
+                logger.info(f"  Price: ${details['current_price']:.4f}")
+                logger.info(f"  EMA5: {details['ema5']:.4f}")
+                logger.info(f"  EMA20: {details['ema20']:.4f}")
+                logger.info(f"  EMA20 Slope: {details['ema20_slope']*100:.2f}%")
+                logger.info(f"  Volume Expansion: {details['volume_expansion']}")
+                logger.info(f"  Bullish Crossover: {details['ema_bullish_crossover']}")
+                logger.info(f"  Bearish Crossover: {details['ema_bearish_crossover']}")
+                logger.info(f"  Price Above EMA5: {details['price_above_ema5']}")
+                logger.info(f"  Signal: {signal} ({'BUY' if signal == 1 else 'SELL' if signal == -1 else 'HOLD'})")
         except Exception as e:
-            print(f"Error testing {symbol}: {e}")
+            logger.error(f"Error testing {symbol}: {e}")
 
 
 if __name__ == "__main__":
