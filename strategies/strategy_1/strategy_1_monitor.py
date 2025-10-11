@@ -440,8 +440,8 @@ def get_user_input(default_config: dict = None) -> dict:
         params = default_params.copy()  # 复制默认参数
         
         # 设置默认的成交量参数
-        default_vol_multiplier = default_config.get('vol_multiplier', 1.2)
-        default_confirmation_pct = default_config.get('confirmation_pct', 0.2)
+        default_vol_multiplier = default_params.get('vol_multiplier', 1.2)
+        default_confirmation_pct = default_params.get('confirmation_pct', 0.2)
         
         # 无论使用什么辅助条件，都设置成交量参数
         vol_multiplier_input = input(f"请输入成交量放大倍数 (默认 {default_vol_multiplier}): ").strip()
@@ -488,7 +488,6 @@ def get_user_input(default_config: dict = None) -> dict:
         trade = default_trade
         assist_cond = default_assist_cond
         params = default_params.copy()
-        vol_multiplier = default_config.get('vol_multiplier', 1.2)
         trade_amount = default_trade_amount
         trade_mode = default_trade_mode
         leverage = default_leverage

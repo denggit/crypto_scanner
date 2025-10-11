@@ -23,8 +23,7 @@ class Strategy1Monitor(BaseMonitor):
     
     def __init__(self, symbol: str, bar: str = '1m',
                  short_ma: int = 5, long_ma: int = 20,
-                 vol_multiplier: float = 1.2, confirmation_pct: float = 0.2,
-                 mode: str = 'strict', trailing_stop_pct: float = 1.0):
+                 mode: str = 'strict', trailing_stop_pct: float = 1.0, **params):
         """
         Initialize Strategy 1 Monitor
         
@@ -33,19 +32,25 @@ class Strategy1Monitor(BaseMonitor):
             bar: K-line time interval
             short_ma: Short EMA period
             long_ma: Long EMA period
-            vol_multiplier: Volume multiplier
-            confirmation_pct: Confirmation percentage
             mode: Mode ('strict' or 'loose')
             trailing_stop_pct: Trailing stop percentage
+            **params: Additional parameters for assist conditions
+                  vol_multiplier: Volume multiplier (default: 1.2)
+                  confirmation_pct: Confirmation percentage (default: 0.2)
         """
         super().__init__(symbol, bar, data_dir="monitor_data", file_prefix="strategy_monitor")
         
         self.short_ma = short_ma
         self.long_ma = long_ma
-        self.vol_multiplier = vol_multiplier
-        self.confirmation_pct = confirmation_pct
         self.mode = mode
         self.trailing_stop_pct = trailing_stop_pct
+        
+        # 设置默认参数并合并用户提供的参数
+        self.params = {
+            'vol_multiplier': 1.2,
+            'confirmation_pct': 0.2
+        }
+        self.params.update(params)
         
         self.client = OKXClient()
         self.strategy = EMACrossoverStrategy(self.client)
@@ -161,7 +166,7 @@ class Strategy1Monitor(BaseMonitor):
         """Run monitoring loop"""
         logger.info(f"开始模拟监控 {self.symbol} 的EMA交叉策略...")
         logger.info(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
-              f"成交量倍数={self.vol_multiplier}, 确认百分比={self.confirmation_pct}%, "
+              f"成交量倍数={self.params.get('vol_multiplier', 1.2)}, 确认百分比={self.params.get('confirmation_pct', 0.2)}%, "
               f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%")
         
         try:
@@ -171,14 +176,12 @@ class Strategy1Monitor(BaseMonitor):
                 try:
                     signal = self.strategy.calculate_ema_crossover_signal(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.mode, self.assist_cond,
-                        vol_multiplier=self.vol_multiplier, confirmation_pct=self.confirmation_pct, **self.params
+                        self.mode, self.assist_cond, **self.params
                     )
                     
                     details = self.strategy.get_strategy_details(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.mode, self.assist_cond,
-                        vol_multiplier=self.vol_multiplier, confirmation_pct=self.confirmation_pct, **self.params
+                        self.mode, self.assist_cond, **self.params
                     )
                     
                     price = details.get('current_price', 0)

@@ -1,10 +1,8 @@
 {
-  "symbol": "BTC-USDT",
+  "symbol": "LTC-USDT-SWAP",
   "bar": "1m",
   "short_ma": 5,
   "long_ma": 20,
-  "vol_multiplier": 1.2,
-  "confirmation_pct": 0.2,
   "mode": "loose",
   "trailing_stop_pct": 1.0,
   "trade": false,
@@ -13,6 +11,8 @@
   "leverage": 3,
   "assist_cond": "volume",
   "params": {
+    "vol_multiplier": 1.2,
+    "confirmation_pct": 0.2,
     "rsi_period": 9
   }
 }
