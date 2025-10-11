@@ -31,13 +31,13 @@ class EMACrossoverStrategy:
     def calculate_ema_crossover_signal(self, symbol: str, bar: str = '1m', 
                                      short_ma: int = 5, long_ma: int = 20,
                                      vol_multiplier: float = 1.2, confirmation_pct: float = 0.2,
-                                     mode: str = 'strict') -> int:
+                                     mode: str = 'strict', assist_cond: str = 'volume', **params) -> int:
         """
         计算EMA交叉信号
         
         信号规则：
-        1. 当成交量放大，且EMA20斜率大于0，EMA5上穿EMA20且K线收盘价大于EMA5时，返回信号1（买入）
-        2. 当EMA20斜率小于0，EMA5下穿EMA20且K线收盘价小于EMA5时，返回信号-1（卖出）
+        1. 当辅助条件满足时，且EMA20斜率大于0，EMA5上穿EMA20且K线收盘价大于EMA5时，返回信号1（买入）
+        2. 当辅助条件满足时，且EMA20斜率小于0，EMA5下穿EMA20且K线收盘价小于EMA5时，返回信号-1（卖出）
         3. 否则返回信号0（持有）
         
         Args:
@@ -50,6 +50,12 @@ class EMACrossoverStrategy:
             mode: 模式 ('strict' or 'loose', default: 'strict')
                   strict mode: 要求当前K线放量（趋势稳健）
                   loose mode: 允许前一根放量（更激进，适合山寨）
+            assist_cond: 辅助条件类型 ('volume', 'rsi', or None, default: 'volume')
+                  volume: 要求成交量放大
+                  rsi: 要求RSI条件满足（做多时RSI>55，做空时RSI<45）
+                  None: 不使用辅助条件
+            **params: 辅助条件的具体参数
+                  rsi_period: RSI计算周期 (default: 9)
             
         Returns:
             int: 信号值 (1=买入, -1=卖出, 0=持有)
@@ -94,6 +100,16 @@ class EMACrossoverStrategy:
             # 计算成交量条件（使用近期最高成交量作为基准）
             current_volume = volumes.iloc[-1]
             volume_ratio = 0  # 初始化volume_ratio
+            
+            # 计算RSI条件（如果需要）
+            current_rsi = 50  # 默认值
+            if assist_cond == 'rsi':
+                rsi_period = params.get('rsi_period', 9)
+                rsi_values = rsi(closes, rsi_period)
+                if len(rsi_values) > 0 and not pd.isna(rsi_values.iloc[-1]):
+                    current_rsi = rsi_values.iloc[-1]
+                else:
+                    current_rsi = 50  # 如果计算失败，使用默认值
 
             # 根据模式选择成交量判断方式
             if mode == 'loose' and len(volumes) >= 2:
@@ -147,12 +163,24 @@ class EMACrossoverStrategy:
             price_below_ema5 = current_close < current_ema_short
             
             # 生成信号
-            # 买入信号：成交量放大，且EMA20斜率大于0，EMA5确认上穿EMA20且K线收盘价大于EMA5
-            if volume_expansion and ema20_slope > 0 and confirmed_bullish and price_above_ema5:
+            # 买入信号：根据辅助条件判断，且EMA20斜率大于0，EMA5确认上穿EMA20且K线收盘价大于EMA5
+            buy_condition = (ema20_slope > 0 and confirmed_bullish and price_above_ema5)
+            if assist_cond == 'volume':
+                buy_condition = buy_condition and volume_expansion
+            elif assist_cond == 'rsi':
+                buy_condition = buy_condition and (current_rsi > 55)
+            
+            if buy_condition:
                 return 1
                 
-            # 卖出信号：EMA20斜率小于0，EMA5确认下穿EMA20且K线收盘价小于EMA5
-            elif ema20_slope < 0 and confirmed_bearish and price_below_ema5:
+            # 卖出信号：根据辅助条件判断，且EMA20斜率小于0，EMA5确认下穿EMA20且K线收盘价小于EMA5
+            sell_condition = (ema20_slope < 0 and confirmed_bearish and price_below_ema5)
+            if assist_cond == 'volume':
+                sell_condition = sell_condition and volume_expansion
+            elif assist_cond == 'rsi':
+                sell_condition = sell_condition and (current_rsi < 45)
+            
+            if sell_condition:
                 return -1
                 
             # 持有信号
@@ -166,7 +194,7 @@ class EMACrossoverStrategy:
     def get_strategy_details(self, symbol: str, bar: str = '1m', 
                            short_ma: int = 5, long_ma: int = 20,
                            vol_multiplier: float = 1.2, confirmation_pct: float = 0.2,
-                           mode: str = 'strict') -> dict:
+                           mode: str = 'strict', assist_cond: str = 'volume', **params) -> dict:
         """
         获取策略详细信息，用于调试和分析
         
@@ -269,7 +297,7 @@ class EMACrossoverStrategy:
             price_below_ema5 = current_close < current_ema_short
             
             # 计算信号
-            signal = self.calculate_ema_crossover_signal(symbol, bar, short_ma, long_ma, vol_multiplier, confirmation_pct, mode)
+            signal = self.calculate_ema_crossover_signal(symbol, bar, short_ma, long_ma, vol_multiplier, confirmation_pct, mode, assist_cond, **params)
             
             # 计算平均成交量用于返回（如果未定义则设为0）
             avg_volume = volumes.iloc[-10:-1].mean() if len(volumes) >= 10 else 0

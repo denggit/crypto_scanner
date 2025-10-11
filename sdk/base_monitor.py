@@ -35,13 +35,14 @@ class BaseMonitor(ABC):
         self.bar = bar
         self.trade_mode = trade_mode
         
-        # 模拟交易数据记录
-        self.mock_data_dir = os.path.join("tracking_data", "monitor_data")
+        # 模拟交易数据记录 - 基于项目根目录
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.mock_data_dir = os.path.join(project_root, "tracking_data", "monitor_data")
         self.mock_file_prefix = "monitor"
         
         # 真实交易数据记录（仅在trade_mode=True时使用）
         if trade_mode:
-            self.real_data_dir = os.path.join("tracking_data", "trade_data")
+            self.real_data_dir = os.path.join(project_root, "tracking_data", "trade_data")
             self.real_file_prefix = "trade"
         
         self.mock_position = 0
@@ -51,7 +52,7 @@ class BaseMonitor(ABC):
         self.trade_count = 0
         
         # 确保 tracking_data 根目录存在
-        tracking_data_root = "tracking_data"
+        tracking_data_root = os.path.join(project_root, "tracking_data")
         if not os.path.exists(tracking_data_root):
             os.makedirs(tracking_data_root)
         

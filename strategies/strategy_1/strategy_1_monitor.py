@@ -9,6 +9,8 @@
 
 import os
 import sys
+import json
+import argparse
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -29,7 +31,7 @@ class StrategyMonitor(Strategy1Monitor):
                  vol_multiplier: float = 1.2, confirmation_pct: float = 0.2,
                  mode: str = 'strict', trailing_stop_pct: float = 1.0,
                  trade: bool = False, trade_amount: float = 10.0,
-                 trade_mode: int = 3, leverage: int = 3):
+                 trade_mode: int = 3, leverage: int = 3, assist_cond: str = 'volume', **params):
         """
         Initialize Strategy Monitor with unified mock/real trading logic
         
@@ -46,6 +48,8 @@ class StrategyMonitor(Strategy1Monitor):
             trade_amount: USDT amount for each trade
             trade_mode: Trading mode (1=现货, 2=全仓杠杆, 3=逐仓杠杆)
             leverage: Leverage multiplier (default: 3x)
+            assist_cond: Assist condition type ('volume', 'rsi', or None, default: 'volume')
+            **params: Additional parameters for assist conditions
         """
         self.trade_amount = trade_amount
         self.trade_mode_setting = trade_mode
@@ -57,6 +61,8 @@ class StrategyMonitor(Strategy1Monitor):
         self.confirmation_pct = confirmation_pct
         self.mode = mode
         self.trailing_stop_pct = trailing_stop_pct
+        self.assist_cond = assist_cond
+        self.params = params
         
         from sdk.base_monitor import BaseMonitor
         BaseMonitor.__init__(self, symbol, bar, trade_mode=trade)
@@ -210,7 +216,8 @@ class StrategyMonitor(Strategy1Monitor):
         logger.info(f"开始{mode_text} {self.symbol} 的EMA交叉策略...")
         logger.info(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
               f"成交量倍数={self.vol_multiplier}, 确认百分比={self.confirmation_pct}%, "
-              f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%")
+              f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%, "
+              f"辅助条件={self.assist_cond if self.assist_cond else '无'}")
         
         if self.trade_mode:
             trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}
@@ -226,22 +233,35 @@ class StrategyMonitor(Strategy1Monitor):
                 try:
                     signal = self.strategy.calculate_ema_crossover_signal(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.vol_multiplier, self.confirmation_pct, self.mode
+                        self.vol_multiplier, self.confirmation_pct, self.mode, self.assist_cond, **self.params
                     )
                     
                     details = self.strategy.get_strategy_details(
                         self.symbol, self.bar, self.short_ma, self.long_ma,
-                        self.vol_multiplier, self.confirmation_pct, self.mode
+                        self.vol_multiplier, self.confirmation_pct, self.mode, self.assist_cond, **self.params
                     )
                     
                     price = details.get('current_price', 0)
                     
                     if price > 0:
+                        # 在每次K线更新时都检查移动止损，确保最高价/最低价正确更新
+                        self._check_trailing_stop(price)
                         self.execute_trade(signal, price, details)
+                        
+                        # 计算距离最高价/最低价的百分比
+                        price_info = ""
+                        if self.mock_position == 1 and self.mock_highest_price > 0:
+                            # 持多仓：计算当前价格距离最高价的百分比
+                            distance_pct = (self.mock_highest_price - price) / self.mock_highest_price * 100
+                            price_info = f", 距离最高价: {distance_pct:.2f}%"
+                        elif self.mock_position == -1 and self.mock_lowest_price > 0:
+                            # 持空仓：计算当前价格距离最低价的百分比
+                            distance_pct = (price - self.mock_lowest_price) / self.mock_lowest_price * 100
+                            price_info = f", 距离最低价: {distance_pct:.2f}%"
                         
                         logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
                               f"{self.symbol} 价格: {price:.4f}, 信号: {signal}, "
-                              f"模拟仓位: {self.mock_position}, 交易次数: {self.trade_count}")
+                              f"模拟仓位: {self.mock_position}, 交易次数: {self.trade_count}{price_info}")
                     else:
                         logger.warning(f"无法获取 {self.symbol} 的价格数据")
                 
@@ -262,51 +282,184 @@ class StrategyMonitor(Strategy1Monitor):
             logger.error(f"监控过程中出错: {e}")
 
 
-def main():
-    """主函数"""
+def load_config_from_file(config_path: str) -> dict:
+    """从配置文件加载配置"""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        logger.info(f"从配置文件 {config_path} 加载配置成功")
+        return config
+    except Exception as e:
+        logger.error(f"加载配置文件失败: {e}")
+        return {}
+
+def get_user_input(default_config: dict = None) -> dict:
+    """获取用户输入参数，使用配置文件的默认值"""
     logger.info("EMA交叉策略实盘模拟监控系统")
     logger.info("=" * 50)
     
-    symbol = input("请输入交易对 (默认 BTC-USDT): ").strip() or "BTC-USDT"
-    bar = input("请输入K线周期 (默认 1m): ").strip() or "1m"
-    mode = input("请输入模式 (strict/loose, 默认 loose): ").strip() or "loose"
-    trailing_stop_input = input("请输入移动止损百分比 (默认 1.0%): ").strip()
-    trailing_stop_pct = float(trailing_stop_input) if trailing_stop_input else 1.0
-    trade_input = input("是否真实交易 (y/n, 默认 n): ").strip().lower()
-    trade = trade_input == 'y' or trade_input == 'yes'
+    # 使用配置文件的默认值
+    if default_config is None:
+        default_config = {}
     
-    trade_amount = 10.0
-    trade_mode = 3
-    leverage = 3
+    default_symbol = default_config.get('symbol', 'BTC-USDT')
+    default_bar = default_config.get('bar', '1m')
+    default_mode = default_config.get('mode', 'loose')
+    default_trailing_stop_pct = default_config.get('trailing_stop_pct', 1.0)
+    default_trade = default_config.get('trade', False)
+    default_trade_amount = default_config.get('trade_amount', 10.0)
+    default_trade_mode = default_config.get('trade_mode', 3)
+    default_leverage = default_config.get('leverage', 3)
+    default_assist_cond = default_config.get('assist_cond', 'volume')
+    default_params = default_config.get('params', {})
     
-    if trade:
-        trade_amount_input = input("请输入每次交易的USDT金额 (默认 10.0): ").strip()
-        trade_amount = float(trade_amount_input) if trade_amount_input else 10.0
+    try:
+        symbol = input(f"请输入交易对 (默认 {default_symbol}): ").strip() or default_symbol
+        bar = input(f"请输入K线周期 (默认 {default_bar}): ").strip() or default_bar
+        mode = input(f"请输入模式 (strict/loose, 默认 {default_mode}): ").strip() or default_mode
+        trailing_stop_input = input(f"请输入移动止损百分比 (默认 {default_trailing_stop_pct}%): ").strip()
+        trailing_stop_pct = float(trailing_stop_input) if trailing_stop_input else default_trailing_stop_pct
         
-        logger.info("交易模式选择:")
-        logger.info("1. 现货模式")
-        logger.info("2. 全仓杠杆模式")
-        logger.info("3. 逐仓杠杆模式 (默认)")
-        trade_mode_input = input("请选择交易模式 (1/2/3, 默认 3): ").strip()
-        trade_mode = int(trade_mode_input) if trade_mode_input in ['1', '2', '3'] else 3
+        trade_input = input(f"是否真实交易 (y/n, 默认 {'y' if default_trade else 'n'}): ").strip().lower()
+        if trade_input:
+            trade = trade_input == 'y' or trade_input == 'yes'
+        else:
+            trade = default_trade
         
-        if trade_mode in [2, 3]:
-            leverage_input = input("请输入杠杆倍数 (默认 3): ").strip()
-            leverage = int(leverage_input) if leverage_input else 3
+        logger.info("辅助条件选择:")
+        logger.info("1. 成交量放大 (volume)")
+        logger.info("2. RSI条件 (rsi)")
+        logger.info("3. 无辅助条件 (none)")
+        
+        assist_cond_map = {'1': 'volume', '2': 'rsi', '3': None}
+        default_assist_input = '1' if default_assist_cond == 'volume' else '2' if default_assist_cond == 'rsi' else '3'
+        
+        assist_input = input(f"请选择辅助条件 (1/2/3, 默认 {default_assist_input}): ").strip()
+        assist_cond = assist_cond_map.get(assist_input, default_assist_cond)
+        
+        # 根据选择的辅助条件动态获取对应的技术指标参数
+        params = default_params.copy()  # 复制默认参数
+        vol_multiplier = default_config.get('vol_multiplier', 1.2)
+        
+        if assist_cond == 'rsi':
+            default_rsi_period = default_params.get('rsi_period', 9)
+            rsi_period_input = input(f"请输入RSI周期 (默认 {default_rsi_period}): ").strip()
+            params['rsi_period'] = int(rsi_period_input) if rsi_period_input else default_rsi_period
+        elif assist_cond == 'volume':
+            # 可以在这里添加成交量相关的参数输入
+            default_vol_multiplier = default_config.get('vol_multiplier', 1.2)
+            vol_multiplier_input = input(f"请输入成交量放大倍数 (默认 {default_vol_multiplier}): ").strip()
+            vol_multiplier = float(vol_multiplier_input) if vol_multiplier_input else default_vol_multiplier
+        
+        trade_amount = default_trade_amount
+        trade_mode = default_trade_mode
+        leverage = default_leverage
+        
+        if trade:
+            trade_amount_input = input(f"请输入每次交易的USDT金额 (默认 {default_trade_amount}): ").strip()
+            trade_amount = float(trade_amount_input) if trade_amount_input else default_trade_amount
+            
+            logger.info("交易模式选择:")
+            logger.info("1. 现货模式")
+            logger.info("2. 全仓杠杆模式")
+            logger.info("3. 逐仓杠杆模式")
+            
+            trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}
+            default_trade_mode_name = trade_mode_names.get(default_trade_mode, "逐仓杠杆")
+            
+            trade_mode_input = input(f"请选择交易模式 (1/2/3, 默认 {default_trade_mode}): ").strip()
+            trade_mode = int(trade_mode_input) if trade_mode_input in ['1', '2', '3'] else default_trade_mode
+            
+            if trade_mode in [2, 3]:
+                leverage_input = input(f"请输入杠杆倍数 (默认 {default_leverage}): ").strip()
+                leverage = int(leverage_input) if leverage_input else default_leverage
     
+    except (EOFError, KeyboardInterrupt):
+        logger.info("\n用户取消输入，使用默认配置")
+        # 使用默认配置
+        symbol = default_symbol
+        bar = default_bar
+        mode = default_mode
+        trailing_stop_pct = default_trailing_stop_pct
+        trade = default_trade
+        assist_cond = default_assist_cond
+        params = default_params.copy()
+        vol_multiplier = default_config.get('vol_multiplier', 1.2)
+        trade_amount = default_trade_amount
+        trade_mode = default_trade_mode
+        leverage = default_leverage
+    
+    return {
+        'symbol': symbol,
+        'bar': bar,
+        'short_ma': default_config.get('short_ma', 5),
+        'long_ma': default_config.get('long_ma', 20),
+        'vol_multiplier': vol_multiplier,
+        'confirmation_pct': default_config.get('confirmation_pct', 0.2),
+        'mode': mode,
+        'trailing_stop_pct': trailing_stop_pct,
+        'trade': trade,
+        'trade_amount': trade_amount,
+        'trade_mode': trade_mode,
+        'leverage': leverage,
+        'assist_cond': assist_cond,
+        'params': params
+    }
+
+def main():
+    """主函数"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='EMA交叉策略实盘模拟监控系统')
+    parser.add_argument('--config', type=str, help='配置文件路径', default=None)
+    args = parser.parse_args()
+    
+    # 加载配置
+    if args.config:
+        config = load_config_from_file(args.config)
+        if not config:
+            logger.error("配置文件加载失败，使用默认配置")
+            config = {}
+    else:
+        # 加载默认配置文件作为用户输入的默认值
+        config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+        default_config = load_config_from_file(config_path)
+        if not default_config:
+            logger.info("未找到默认配置文件，使用系统默认值")
+            default_config = {}
+        config = get_user_input(default_config)
+    
+    # 设置默认值
+    symbol = config.get('symbol', 'BTC-USDT')
+    bar = config.get('bar', '1m')
+    short_ma = config.get('short_ma', 5)
+    long_ma = config.get('long_ma', 20)
+    vol_multiplier = config.get('vol_multiplier', 1.2)
+    confirmation_pct = config.get('confirmation_pct', 0.2)
+    mode = config.get('mode', 'loose')
+    trailing_stop_pct = config.get('trailing_stop_pct', 1.0)
+    trade = config.get('trade', False)
+    trade_amount = config.get('trade_amount', 10.0)
+    trade_mode = config.get('trade_mode', 3)
+    leverage = config.get('leverage', 3)
+    assist_cond = config.get('assist_cond', 'volume')
+    params = config.get('params', {})
+    
+    # 创建监控器
     monitor = StrategyMonitor(
         symbol=symbol,
         bar=bar,
-        short_ma=5,
-        long_ma=20,
-        vol_multiplier=1.2,
-        confirmation_pct=0.2,
+        short_ma=short_ma,
+        long_ma=long_ma,
+        vol_multiplier=vol_multiplier,
+        confirmation_pct=confirmation_pct,
         mode=mode,
         trailing_stop_pct=trailing_stop_pct,
         trade=trade,
         trade_amount=trade_amount,
         trade_mode=trade_mode,
-        leverage=leverage
+        leverage=leverage,
+        assist_cond=assist_cond,
+        **params
     )
     
     monitor.run()
