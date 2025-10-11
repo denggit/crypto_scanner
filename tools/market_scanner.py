@@ -6,9 +6,7 @@ import os
 import sys
 import time
 from datetime import datetime
-import asyncio
 import concurrent.futures
-from functools import lru_cache
 import pandas as pd
 
 # Add parent directory to path to import modules
@@ -21,9 +19,9 @@ load_dotenv()
 
 from utils.logger import logger
 
-from okx_api.client import OKXClient
-from okx_api.market_data import MarketDataRetriever
-from tools.technical_indicators import sma, ema, rsi, macd, atr
+from apis.okx_api.client import OKXClient
+from apis.okx_api.market_data import MarketDataRetriever
+from tools.technical_indicators import sma, rsi, macd, atr
 
 
 class CryptoScanner:

@@ -10,13 +10,12 @@
 import os
 import sys
 import pandas as pd
-import numpy as np
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from okx_api.client import OKXClient
-from okx_api.market_data import MarketDataRetriever
+from apis.okx_api.client import OKXClient
+from apis.okx_api.market_data import MarketDataRetriever
 from tools.technical_indicators import ema
 from utils.logger import logger
 

@@ -16,7 +16,7 @@ class Trader:
         """
         self.client = client
 
-    def place_market_order(self, instId: str, side: str, sz: str, tdMode: str = 'cash', 
+    def place_market_order(self, instId: str, side: str, sz: str, tdMode: str = 'cash', posSide=None,
                            reduceOnly: bool = False, tgtCcy: str = 'quote_ccy') -> Optional[Order]:
         """
         Place a market order
@@ -26,8 +26,9 @@ class Trader:
             side: Order side ('buy' or 'sell')
             sz: Quantity
             tdMode: Trade mode ('cash', 'cross', 'isolated')
+            posSide: 持仓方向 (long, short)
             reduceOnly: Reduce only flag
-            tgtCcy: Order quantity unit (base_ccy, quote_ccy)
+            tgtCcy: base_ccy: 交易货币 ；quote_ccy：计价货币。买单默认quote_ccy， 卖单默认base_ccy
 
         Returns:
             Order object if successful, None otherwise
@@ -39,7 +40,8 @@ class Trader:
             ordType='market',
             sz=sz,
             reduceOnly=reduceOnly,
-            tgtCcy=tgtCcy
+            tgtCcy=tgtCcy,
+            posSide=posSide
         )
 
         if response.get('code') == '0' and 'data' in response:
@@ -61,7 +63,7 @@ class Trader:
         return None
 
     def place_limit_order(self, instId: str, side: str, sz: str, px: str,
-                         tdMode: str = 'cash', reduceOnly: bool = False) -> Optional[Order]:
+                         tdMode: str = 'cash', reduceOnly: bool = False, tgtCcy: str = 'quote_ccy') -> Optional[Order]:
         """
         Place a limit order
 
@@ -72,10 +74,17 @@ class Trader:
             px: Price
             tdMode: Trade mode
             reduceOnly: Reduce only flag
+            tgtCcy: Order quantity unit (base_ccy, quote_ccy)
 
         Returns:
             Order object if successful, None otherwise
         """
+        # 自动判断 posSide
+        if reduceOnly:
+            posSide = 'short' if side == 'buy' else 'long'
+        else:
+            posSide = 'long' if side == 'buy' else 'short'
+
         response = self.client.place_order(
             instId=instId,
             tdMode=tdMode,
@@ -83,7 +92,9 @@ class Trader:
             ordType='limit',
             sz=sz,
             px=px,
-            reduceOnly=reduceOnly
+            reduceOnly=reduceOnly,
+            tgtCcy=tgtCcy,
+            posSide=posSide
         )
 
         if response.get('code') == '0' and 'data' in response:

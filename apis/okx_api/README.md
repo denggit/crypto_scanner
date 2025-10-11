@@ -35,13 +35,13 @@ pip install requests
 The main API client that handles authentication, requests, and responses.
 
 ```python
-from okx_api.client import OKXClient
+from apis.okx_api.client import OKXClient
 
 # Initialize client
 client = OKXClient(
-    api_key="your_api_key",
-    api_secret="your_api_secret",
-    passphrase="your_passphrase"
+   api_key="your_api_key",
+   api_secret="your_api_secret",
+   passphrase="your_passphrase"
 )
 ```
 
@@ -50,7 +50,7 @@ client = OKXClient(
 Retrieve market data including tickers, order books, and candlestick data.
 
 ```python
-from okx_api.market_data import MarketDataRetriever
+from apis.okx_api.market_data import MarketDataRetriever
 
 # Initialize market data retriever
 market_data = MarketDataRetriever(client)
@@ -73,24 +73,24 @@ klines = market_data.get_kline('BTC-USDT', bar='1H', limit=100)
 Execute trades and manage orders.
 
 ```python
-from okx_api.trader import Trader
+from apis.okx_api import Trader
 
 # Initialize trader
 trader = Trader(client)
 
 # Place market order
 order = trader.place_market_order(
-    instId='BTC-USDT',
-    side='buy',
-    sz='0.001'
+   instId='BTC-USDT',
+   side='buy',
+   sz='0.001'
 )
 
 # Place limit order
 order = trader.place_limit_order(
-    instId='BTC-USDT',
-    side='sell',
-    sz='0.001',
-    px='50000'
+   instId='BTC-USDT',
+   side='sell',
+   sz='0.001',
+   px='50000'
 )
 
 # Get pending orders
@@ -118,15 +118,15 @@ See `example.py` for a complete example of how to use all modules.
 
 ```python
 import os
-from okx_api.client import OKXClient
-from okx_api.market_data import MarketDataRetriever
-from okx_api.trader import Trader
+from apis.okx_api.client import OKXClient
+from apis.okx_api.market_data import MarketDataRetriever
+from apis.okx_api import Trader
 
 # Initialize
 client = OKXClient(
-    api_key=os.getenv('OKX_API_KEY'),
-    api_secret=os.getenv('OKX_API_SECRET'),
-    passphrase=os.getenv('OKX_PASSPHRASE')
+   api_key=os.getenv('OKX_API_KEY'),
+   api_secret=os.getenv('OKX_API_SECRET'),
+   passphrase=os.getenv('OKX_PASSPHRASE')
 )
 
 market_data = MarketDataRetriever(client)

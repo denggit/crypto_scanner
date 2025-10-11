@@ -73,6 +73,10 @@ class BaseMonitor(ABC):
         self._init_csv_files()
         self._restore_state()
         
+        # 如果真实交易模式，同步真实仓位到模拟仓位
+        if trade_mode:
+            self._sync_real_position()
+        
         # 使用两个独立的写入队列
         self.mock_write_queue = []
         self.real_write_queue = []
@@ -151,6 +155,58 @@ class BaseMonitor(ABC):
                 logger.info("未找到模拟历史记录，使用初始状态")
         except Exception as e:
             logger.error(f"恢复状态失败，使用初始状态: {e}")
+    
+    def _sync_real_position(self):
+        """Sync real position to mock position for trade_mode=True"""
+        try:
+            trader = self.get_trader()
+            if hasattr(trader, 'client'):
+                # 获取真实仓位信息
+                positions = trader.client.get_positions()
+                
+                if positions and 'data' in positions and len(positions['data']) > 0:
+                    # 查找当前交易对的仓位
+                    for pos in positions['data']:
+                        inst_id = pos.get('instId', '')
+                        pos_side = pos.get('posSide', '')
+                        pos_amt = float(pos.get('pos', '0'))
+                        
+                        # 检查是否匹配当前交易对
+                        if (inst_id == self.symbol or 
+                            inst_id == f"{self.symbol}-SWAP" or
+                            inst_id.replace('-SWAP', '') == self.symbol):
+                            
+                            if pos_amt > 0:
+                                # 持有多仓
+                                self.mock_position = 1
+                                self.mock_entry_price = float(pos.get('avgPx', '0'))
+                                self.mock_highest_price = self.mock_entry_price
+                                self.mock_lowest_price = self.mock_entry_price
+                                logger.info(f"同步真实仓位到模拟仓位: 持有多仓, 入场价={self.mock_entry_price:.4f}")
+                                return
+                            elif pos_amt < 0:
+                                # 持有空仓
+                                self.mock_position = -1
+                                self.mock_entry_price = float(pos.get('avgPx', '0'))
+                                self.mock_lowest_price = self.mock_entry_price
+                                self.mock_highest_price = self.mock_entry_price
+                                logger.info(f"同步真实仓位到模拟仓位: 持有空仓, 入场价={self.mock_entry_price:.4f}")
+                                return
+                    
+                    # 如果没有找到匹配的仓位，说明无仓位
+                    self.mock_position = 0
+                    self.mock_entry_price = 0.0
+                    self.mock_highest_price = 0.0
+                    self.mock_lowest_price = 0.0
+                    logger.info("同步真实仓位到模拟仓位: 无仓位")
+                else:
+                    logger.info("未找到真实仓位信息，保持模拟仓位状态")
+            else:
+                logger.warning("无法获取trader实例，无法同步真实仓位")
+                
+        except Exception as e:
+            logger.error(f"同步真实仓位失败: {e}")
+            logger.info("保持当前模拟仓位状态")
     
     def _background_writer(self):
         """Background writer thread"""

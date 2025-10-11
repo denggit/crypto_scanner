@@ -12,13 +12,13 @@ from typing import Optional
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from sdk.base_trader import BaseTrader
-from okx_api.trader import Trader
+from apis.okx_api import Trader
 from utils.logger import logger
 
 
 class Strategy1Trader(BaseTrader):
     """EMA Crossover Strategy Trader"""
-    
+
     def __init__(self, client, trade_amount: float = 10.0, trade_mode: int = 3, leverage: int = 3):
         """
         Initialize Strategy 1 Trader
@@ -32,7 +32,7 @@ class Strategy1Trader(BaseTrader):
         super().__init__(client, trade_amount, trade_mode, leverage)
         self.trader = Trader(client)
         self.leverage_setup_done = {}
-    
+
     def _get_inst_id(self, symbol: str) -> str:
         """
         Get instrument ID based on trade mode
@@ -46,7 +46,7 @@ class Strategy1Trader(BaseTrader):
         if self.is_leverage_mode() and not symbol.endswith("-SWAP"):
             return f"{symbol}-SWAP"
         return symbol
-    
+
     def setup_leverage(self, symbol: str) -> bool:
         """
         Setup leverage for the instrument
@@ -59,12 +59,12 @@ class Strategy1Trader(BaseTrader):
         """
         if not self.is_leverage_mode():
             return True
-        
+
         inst_id = self._get_inst_id(symbol)
-        
+
         if inst_id in self.leverage_setup_done:
             return True
-        
+
         try:
             mgn_mode = self.get_margin_mode()
             result_long = self.client.set_leverage(
@@ -79,7 +79,7 @@ class Strategy1Trader(BaseTrader):
                 mgnMode=mgn_mode,
                 posSide='short'
             )
-            
+
             if result_long.get('code') == '0' and result_short.get('code') == '0':
                 logger.info(f"✅ 杠杆设置成功: {inst_id} {self.leverage}x {mgn_mode}")
                 self.leverage_setup_done[inst_id] = True
@@ -93,15 +93,15 @@ class Strategy1Trader(BaseTrader):
         except Exception as e:
             logger.error(f"⚠️  杠杆设置异常: {e}")
             return False
-    
-    def execute_open_long(self, symbol: str, price: float) -> Optional[any]:
+
+    def execute_open_long(self, symbol: str, price: float = None) -> Optional[any]:
         """
         Execute open long position
         
         Args:
             symbol: Trading pair symbol
-            price: Current price
-            
+            price: Current price (目前先只做市价）
+
         Returns:
             Order object if successful, None otherwise
         """
@@ -109,27 +109,28 @@ class Strategy1Trader(BaseTrader):
         if not self.setup_leverage(symbol):
             logger.error(f"❌ {symbol} 杠杆设置失败，取消开多交易")
             return None
-        
+
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
-        
+
         order = self.trader.place_market_order(
             instId=inst_id,
             side='buy',
             sz=str(self.trade_amount),
             tdMode=td_mode,
-            tgtCcy='quote_ccy'
+            tgtCcy='quote_ccy',
+            posSide='long'
         )
         return order
-    
-    def execute_open_short(self, symbol: str, price: float) -> Optional[any]:
+
+    def execute_open_short(self, symbol: str, price: float = None) -> Optional[any]:
         """
         Execute open short position
         
         Args:
             symbol: Trading pair symbol
-            price: Current price
-            
+            price: Current price (目前先只做市价）
+
         Returns:
             Order object if successful, None otherwise
         """
@@ -137,19 +138,20 @@ class Strategy1Trader(BaseTrader):
         if not self.setup_leverage(symbol):
             logger.error(f"❌ {symbol} 杠杆设置失败，取消开空交易")
             return None
-        
+
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
-        
+
         order = self.trader.place_market_order(
             instId=inst_id,
             side='sell',
             sz=str(self.trade_amount),
             tdMode=td_mode,
-            tgtCcy='quote_ccy'
+            tgtCcy='quote_ccy',
+            posSide="short"
         )
         return order
-    
+
     def execute_close_long(self, symbol: str, price: float) -> Optional[any]:
         """
         Execute close long position (sell all)
@@ -163,7 +165,7 @@ class Strategy1Trader(BaseTrader):
         """
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
-        
+
         if self.is_leverage_mode():
             positions = self.client.get_positions(instId=inst_id)
             if positions and 'data' in positions and len(positions['data']) > 0:
@@ -175,7 +177,8 @@ class Strategy1Trader(BaseTrader):
                             side='sell',
                             sz=available_sz,
                             tdMode=td_mode,
-                            reduceOnly=True
+                            reduceOnly=True,
+                            posSide='long'
                         )
                         return order
         else:
@@ -189,12 +192,13 @@ class Strategy1Trader(BaseTrader):
                                 instId=inst_id,
                                 side='sell',
                                 sz=available_sz,
-                                tdMode=td_mode
+                                tdMode=td_mode,
+                                posSide='long'
                             )
                             return order
                         break
         return None
-    
+
     def execute_close_short(self, symbol: str, price: float) -> Optional[any]:
         """
         Execute close short position (buy all)
@@ -208,7 +212,7 @@ class Strategy1Trader(BaseTrader):
         """
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
-        
+
         if self.is_leverage_mode():
             positions = self.client.get_positions(instId=inst_id)
             if positions and 'data' in positions and len(positions['data']) > 0:
@@ -221,7 +225,7 @@ class Strategy1Trader(BaseTrader):
                             sz=available_sz,
                             tdMode=td_mode,
                             reduceOnly=True,
-                            leverage=self.leverage if self.is_leverage_mode() else None
+                            posSide='short'
                         )
                         return order
         else:
@@ -235,7 +239,8 @@ class Strategy1Trader(BaseTrader):
                                 instId=inst_id,
                                 side='buy',
                                 sz=available_sz,
-                                tdMode=td_mode
+                                tdMode=td_mode,
+                                posSide='short'
                             )
                             return order
                         break

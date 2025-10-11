@@ -47,6 +47,7 @@ class OKXClient:
 
         # Error codes
         self.error_codes = {
+            '1': 'All operations failed',
             '50001': 'Invalid API key',
             '50002': 'Invalid API secret',
             '50003': 'Invalid timestamp',
@@ -259,7 +260,7 @@ class OKXClient:
 
     def place_order(self, instId: str, tdMode: str, side: str, ordType: str,
                    sz: str = None, px: str = None, reduceOnly: bool = False, 
-                   tgtCcy: str = 'quote_ccy') -> Dict:
+                   tgtCcy: str = 'quote_ccy', posSide: str = None) -> Dict:
         """
         Place order (requires authentication)
 
@@ -272,6 +273,7 @@ class OKXClient:
             px: Price (required for limit orders)
             reduceOnly: Reduce only flag
             tgtCcy: Order quantity unit (base_ccy, quote_ccy) - if quote_ccy, sz is in USDT
+            posSide: long_short_mode or net_mode, check by client._make_request("GET", "/api/v5/account/config", {}, signed=True)
 
         Returns:
             Order result
@@ -292,6 +294,8 @@ class OKXClient:
             params['reduceOnly'] = reduceOnly
         if tgtCcy:
             params['tgtCcy'] = tgtCcy
+        if posSide:
+            params['posSide'] = posSide  # 👈 关键加上这一行
 
         return self._make_request('POST', endpoint, params, signed=True)
 
@@ -348,8 +352,9 @@ class OKXClient:
         """
         endpoint = "/api/v5/account/positions"
         params = {}
-        if instId:
-            params['instId'] = instId
+        # 有bug，当前不支持指定instId
+        # if instId:
+        #     params['instId'] = instId
         return self._make_request('GET', endpoint, params, signed=True)
     
     def get_instruments(self, instType: str, instId: str = None) -> Dict:

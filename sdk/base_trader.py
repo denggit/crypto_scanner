@@ -139,7 +139,7 @@ class BaseTrader(ABC):
             True if successful, False otherwise
         """
         try:
-            if action in ["LONG_OPEN", "SHORT_CLOSE_LONG_OPEN"]:
+            if action == "LONG_OPEN":
                 order = self.execute_open_long(symbol, price)
                 if order:
                     logger.info(f"✅ [真实交易] {symbol} 做多成功: 订单ID={order.ordId}, 价格={price:.4f}")
@@ -148,13 +148,47 @@ class BaseTrader(ABC):
                     logger.error(f"❌ [真实交易] {symbol} 做多失败")
                     return False
                     
-            elif action in ["SHORT_OPEN", "LONG_CLOSE_SHORT_OPEN"]:
+            elif action == "SHORT_CLOSE_LONG_OPEN":
+                # 先平空仓，再开多仓
+                close_order = self.execute_close_short(symbol, price)
+                if close_order:
+                    logger.info(f"✅ [真实交易] {symbol} 平空成功: 订单ID={close_order.ordId}")
+                    # 平空成功后开多仓
+                    open_order = self.execute_open_long(symbol, price)
+                    if open_order:
+                        logger.info(f"✅ [真实交易] {symbol} 做多成功: 订单ID={open_order.ordId}, 价格={price:.4f}")
+                        return True
+                    else:
+                        logger.error(f"❌ [真实交易] {symbol} 平空成功但做多失败")
+                        return False
+                else:
+                    logger.error(f"❌ [真实交易] {symbol} 平空失败")
+                    return False
+                    
+            elif action == "SHORT_OPEN":
                 order = self.execute_open_short(symbol, price)
                 if order:
                     logger.info(f"✅ [真实交易] {symbol} 做空成功: 订单ID={order.ordId}, 价格={price:.4f}")
                     return True
                 else:
                     logger.error(f"❌ [真实交易] {symbol} 做空失败")
+                    return False
+                    
+            elif action == "LONG_CLOSE_SHORT_OPEN":
+                # 先平多仓，再开空仓
+                close_order = self.execute_close_long(symbol, price)
+                if close_order:
+                    logger.info(f"✅ [真实交易] {symbol} 平多成功: 订单ID={close_order.ordId}")
+                    # 平多成功后开空仓
+                    open_order = self.execute_open_short(symbol, price)
+                    if open_order:
+                        logger.info(f"✅ [真实交易] {symbol} 做空成功: 订单ID={open_order.ordId}, 价格={price:.4f}")
+                        return True
+                    else:
+                        logger.error(f"❌ [真实交易] {symbol} 平多成功但做空失败")
+                        return False
+                else:
+                    logger.error(f"❌ [真实交易] {symbol} 平多失败")
                     return False
                     
             elif action in ["LONG_CLOSE_TRAILING_STOP"]:

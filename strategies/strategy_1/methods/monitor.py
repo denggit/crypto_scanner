@@ -12,8 +12,8 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from sdk.base_monitor import BaseMonitor
-from okx_api.client import OKXClient
-from okx_api.market_data import MarketDataRetriever
+from apis.okx_api.client import OKXClient
+from apis.okx_api.market_data import MarketDataRetriever
 from strategies.strategy_1.strategy_1 import EMACrossoverStrategy
 from utils.logger import logger
 
