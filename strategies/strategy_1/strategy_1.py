@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from apis.okx_api.client import OKXClient
 from apis.okx_api.market_data import MarketDataRetriever
-from tools.technical_indicators import ema
+from tools.technical_indicators import ema, rsi
 from utils.logger import logger
 
 

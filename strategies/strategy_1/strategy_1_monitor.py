@@ -415,6 +415,13 @@ def get_user_input(default_config: dict = None) -> dict:
     try:
         symbol = input(f"请输入交易对 (默认 {default_symbol}): ").strip() or default_symbol
         bar = input(f"请输入K线周期 (默认 {default_bar}): ").strip() or default_bar
+        
+        short_ma_input = input(f"请输入短EMA周期 (默认 {default_config.get('short_ma', 5)}): ").strip()
+        short_ma = int(short_ma_input) if short_ma_input else default_config.get('short_ma', 5)
+        
+        long_ma_input = input(f"请输入长EMA周期 (默认 {default_config.get('long_ma', 20)}): ").strip()
+        long_ma = int(long_ma_input) if long_ma_input else default_config.get('long_ma', 20)
+        
         mode = input(f"请输入模式 (strict/loose, 默认 {default_mode}): ").strip() or default_mode
         trailing_stop_input = input(f"请输入移动止损百分比 (默认 {default_trailing_stop_pct}%): ").strip()
         trailing_stop_pct = float(trailing_stop_input) if trailing_stop_input else default_trailing_stop_pct
@@ -483,6 +490,8 @@ def get_user_input(default_config: dict = None) -> dict:
         # 使用默认配置
         symbol = default_symbol
         bar = default_bar
+        short_ma = default_config.get('short_ma', 5)
+        long_ma = default_config.get('long_ma', 20)
         mode = default_mode
         trailing_stop_pct = default_trailing_stop_pct
         trade = default_trade
@@ -495,8 +504,8 @@ def get_user_input(default_config: dict = None) -> dict:
     return {
         'symbol': symbol,
         'bar': bar,
-        'short_ma': default_config.get('short_ma', 5),
-        'long_ma': default_config.get('long_ma', 20),
+        'short_ma': short_ma,
+        'long_ma': long_ma,
         'mode': mode,
         'trailing_stop_pct': trailing_stop_pct,
         'trade': trade,
