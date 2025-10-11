@@ -686,7 +686,7 @@ def main():
             default_config = {}
     else:
         # 加载默认配置文件作为用户输入的默认值
-        config_path = os.path.join(os.path.dirname(__file__), 'configs/ltc_usdt_swap.json')
+        config_path = os.path.join(os.path.dirname(__file__), 'configs/bnb_usdt_swap.json')
         default_config = load_config_from_file(config_path)
         if not default_config:
             logger.info("未找到默认配置文件，使用系统默认值")

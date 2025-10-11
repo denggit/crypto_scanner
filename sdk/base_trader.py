@@ -213,6 +213,24 @@ class BaseTrader(ABC):
                     logger.error(f"❌ [真实交易] {symbol} 平空失败")
                     return False
                     
+            elif action in ["LONG_CLOSE_VOLATILITY"]:
+                order = self.execute_close_long(symbol, price)
+                if order:
+                    logger.info(f"✅ [真实交易] {symbol} 波动率平多成功: 订单ID={order.ordId}")
+                    return True
+                else:
+                    logger.error(f"❌ [真实交易] {symbol} 波动率平多失败")
+                    return False
+                    
+            elif action in ["SHORT_CLOSE_VOLATILITY"]:
+                order = self.execute_close_short(symbol, price)
+                if order:
+                    logger.info(f"✅ [真实交易] {symbol} 波动率平空成功: 订单ID={order.ordId}")
+                    return True
+                else:
+                    logger.error(f"❌ [真实交易] {symbol} 波动率平空失败")
+                    return False
+                    
         except Exception as e:
             logger.exception(f"❌ [真实交易] {symbol} 执行交易时出错: {e}")
             return False
@@ -288,11 +306,31 @@ class BaseTrader(ABC):
                 # For spot: sz = trade_amount / single_currency_value
                 calculated_sz = self.trade_amount / single_currency_value
             
-            # Ensure minimum order size
-            final_sz = math.ceil(max(min_sz, calculated_sz) * 10) / 10
+            # Ensure minimum order size and respect lot size
+            # First ensure minimum size
+            final_sz = max(min_sz, calculated_sz)
+            # Then round to nearest multiple of lot_sz (if available)
+            if hasattr(instrument, 'lotSz'):
+                # It's an Instrument object
+                lot_sz = float(instrument.lotSz)
+            else:
+                # It's a dictionary from cache
+                lot_sz = float(instrument.get('lotSz', '1'))
+            
+            if lot_sz > 0:
+                # Ensure minimum order size
+                final_sz = math.ceil(max(min_sz, calculated_sz) * (1 / lot_sz)) / (1 / lot_sz)
+            
+            # Ensure we don't exceed maximum order size
+            if hasattr(instrument, 'maxMktSz'):
+                max_mkt_sz = float(instrument.maxMktSz)
+                final_sz = min(final_sz, max_mkt_sz)
+            elif hasattr(instrument, 'get'):
+                max_mkt_sz = float(instrument.get('maxMktSz', '1000000'))
+                final_sz = min(final_sz, max_mkt_sz)
             
             logger.info(f"下单数量计算: symbol={symbol}, trade_amount={self.trade_amount}, price={price:.8f}, "
-                      f"min_sz={min_sz}, ct_val={ct_val}, calculated_sz={calculated_sz:.8f}, final_sz={final_sz:.8f}")
+                      f"min_sz={min_sz}, lot_sz={lot_sz}, ct_val={ct_val}, calculated_sz={calculated_sz:.8f}, final_sz={final_sz:.8f}")
             
             return str(final_sz)
             

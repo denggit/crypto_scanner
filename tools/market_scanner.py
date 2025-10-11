@@ -2,11 +2,12 @@
 Cryptocurrency Market Scanner using OKX API
 """
 
+import concurrent.futures
 import os
 import sys
 import time
 from datetime import datetime
-import concurrent.futures
+
 import pandas as pd
 
 # Add parent directory to path to import modules
@@ -58,7 +59,7 @@ class CryptoScanner:
                     'symbol': ticker.instId,
                     'price': ticker.last,
                     'price_change_24h': (
-                                (ticker.last - ticker.open24h) / ticker.open24h * 100) if ticker.open24h > 0 else 0,
+                            (ticker.last - ticker.open24h) / ticker.open24h * 100) if ticker.open24h > 0 else 0,
                     'high_24h': ticker.high24h,
                     'low_24h': ticker.low24h,
                     'volume_24h': ticker.volCcy24h,
@@ -74,8 +75,8 @@ class CryptoScanner:
             return []
 
     def scan_ma_alignment(self, currency: str = 'USDT', ma_periods: list = None,
-                         bar: str = '5m', min_vol_ccy: float = 1000000, use_parallel: bool = True,
-                         use_cache: bool = True, symbols: list = None) -> list:
+                          bar: str = '5m', min_vol_ccy: float = 1000000, use_parallel: bool = True,
+                          use_cache: bool = True, symbols: list = None) -> list:
         """
         Scan for cryptocurrencies with moving average alignment (golden cross/multi MA alignment)
         Optimized for performance with parallel processing and caching
@@ -256,7 +257,7 @@ class CryptoScanner:
         try:
             # Use the new method from market_data_retriever
             filtered_symbols = self.market_data_retriever.get_volume_filtered_symbols(
-                'SPOT', currency, min_vol_ccy
+                 'SPOT', currency, min_vol_ccy
             )
 
             if use_cache:
@@ -367,11 +368,11 @@ class CryptoScanner:
             return {}
 
     def scan_ma_convergence_breakout(self, currency: str = 'USDT', ma_periods: list = None,
-                                    bar: str = '15m', min_vol_ccy: float = 1000000,
-                                    convergence_threshold: float = 0.02,
-                                    breakout_strength: float = 0.01,
-                                    use_parallel: bool = True,
-                                    use_cache: bool = True) -> list:
+                                     bar: str = '15m', min_vol_ccy: float = 1000000,
+                                     convergence_threshold: float = 0.02,
+                                     breakout_strength: float = 0.01,
+                                     use_parallel: bool = True,
+                                     use_cache: bool = True) -> list:
         """
         扫描均线粘合+发散形态（趋势启动点检测）
 
@@ -423,9 +424,9 @@ class CryptoScanner:
             return []
 
     def _scan_ma_convergence_breakout_sequential(self, symbols: list, ma_periods: list,
-                                                bar: str, limit: int,
-                                                convergence_threshold: float,
-                                                breakout_strength: float) -> list:
+                                                 bar: str, limit: int,
+                                                 convergence_threshold: float,
+                                                 breakout_strength: float) -> list:
         """顺序扫描均线粘合+发散形态"""
         convergence_breakout_coins = []
 
@@ -444,9 +445,9 @@ class CryptoScanner:
         return convergence_breakout_coins
 
     def _scan_ma_convergence_breakout_parallel(self, symbols: list, ma_periods: list,
-                                              bar: str, limit: int,
-                                              convergence_threshold: float,
-                                              breakout_strength: float) -> list:
+                                               bar: str, limit: int,
+                                               convergence_threshold: float,
+                                               breakout_strength: float) -> list:
         """并行扫描均线粘合+发散形态"""
         convergence_breakout_coins = []
 
@@ -472,9 +473,9 @@ class CryptoScanner:
         return convergence_breakout_coins
 
     def _analyze_symbol_ma_convergence_breakout(self, symbol: str, ma_periods: list,
-                                               bar: str, limit: int,
-                                               convergence_threshold: float,
-                                               breakout_strength: float) -> dict:
+                                                bar: str, limit: int,
+                                                convergence_threshold: float,
+                                                breakout_strength: float) -> dict:
         """
         分析单个币种的均线粘合+发散形态
 
@@ -526,17 +527,18 @@ class CryptoScanner:
             ma5_break_ma20 = current_ma_values[5] > current_ma_values[20]
 
             # 2. MA20 斜率为正
-            ma20_slope = (current_ma_values[20] - prev_ma_values[20]) / prev_ma_values[20] if prev_ma_values[20] > 0 else 0
+            ma20_slope = (current_ma_values[20] - prev_ma_values[20]) / prev_ma_values[20] if prev_ma_values[
+                                                                                                  20] > 0 else 0
 
             # 3. MA5 突破强度
-            ma5_breakout_strength = (current_ma_values[5] - current_ma_values[20]) / current_ma_values[20] if current_ma_values[20] > 0 else 0
+            ma5_breakout_strength = (current_ma_values[5] - current_ma_values[20]) / current_ma_values[20] if \
+            current_ma_values[20] > 0 else 0
 
             # 判断是否满足粘合+发散条件
             if (convergence_ratio <= convergence_threshold and
-                ma5_break_ma20 and
-                ma20_slope > 0 and
-                ma5_breakout_strength >= breakout_strength):
-
+                    ma5_break_ma20 and
+                    ma20_slope > 0 and
+                    ma5_breakout_strength >= breakout_strength):
                 return {
                     'symbol': symbol,
                     'current_price': float(closes.iloc[-1]),
@@ -553,8 +555,8 @@ class CryptoScanner:
         return None
 
     def calculate_stop_loss_take_profit(self, buy_price: float, atr_value: float,
-                                      stop_loss_multiplier: float = 1.5,
-                                      take_profit_multiplier: float = 3.0) -> dict:
+                                        stop_loss_multiplier: float = 1.5,
+                                        take_profit_multiplier: float = 3.0) -> dict:
         """
         计算止盈和止损价格
 
@@ -576,10 +578,10 @@ class CryptoScanner:
         }
 
     def calculate_trailing_stop(self, instId: str,
-                               stop_loss_multiplier: float = 1.5,
-                               take_profit_multiplier: float = 3.0,
-                               atr_period: int = 14,
-                               bar: str = '15m') -> dict:
+                                stop_loss_multiplier: float = 1.5,
+                                take_profit_multiplier: float = 3.0,
+                                atr_period: int = 14,
+                                bar: str = '15m') -> dict:
         """
         计算移动止损止盈价格，自动从OKX API获取行情数据并计算ATR值
 
@@ -651,9 +653,9 @@ class CryptoScanner:
             return None
 
     def scan_momentum_early(self, currency: str = 'USDT', bar: str = '5m',
-                           min_vol_ccy: float = 1000000, rsi_low_threshold: float = 30,
-                           rsi_high_threshold: float = 55, volume_multiplier: float = 1.5,
-                           use_parallel: bool = True, use_cache: bool = True) -> list:
+                            min_vol_ccy: float = 1000000, rsi_low_threshold: float = 30,
+                            rsi_high_threshold: float = 55, volume_multiplier: float = 1.5,
+                            use_parallel: bool = True, use_cache: bool = True) -> list:
         """
         扫描动量早期启动形态（RSI/MACD 启动型）
 
@@ -707,8 +709,8 @@ class CryptoScanner:
             return []
 
     def _scan_momentum_early_sequential(self, symbols: list, bar: str, limit: int,
-                                       rsi_low_threshold: float, rsi_high_threshold: float,
-                                       volume_multiplier: float) -> list:
+                                        rsi_low_threshold: float, rsi_high_threshold: float,
+                                        volume_multiplier: float) -> list:
         """顺序扫描动量早期启动形态"""
         momentum_early_coins = []
 
@@ -727,8 +729,8 @@ class CryptoScanner:
         return momentum_early_coins
 
     def _scan_momentum_early_parallel(self, symbols: list, bar: str, limit: int,
-                                     rsi_low_threshold: float, rsi_high_threshold: float,
-                                     volume_multiplier: float) -> list:
+                                      rsi_low_threshold: float, rsi_high_threshold: float,
+                                      volume_multiplier: float) -> list:
         """并行扫描动量早期启动形态"""
         momentum_early_coins = []
 
@@ -754,8 +756,8 @@ class CryptoScanner:
         return momentum_early_coins
 
     def _analyze_symbol_momentum_early(self, symbol: str, bar: str, limit: int,
-                                      rsi_low_threshold: float, rsi_high_threshold: float,
-                                      volume_multiplier: float) -> dict:
+                                       rsi_low_threshold: float, rsi_high_threshold: float,
+                                       volume_multiplier: float) -> dict:
         """
         分析单个币种的动量早期启动形态
 
@@ -795,7 +797,8 @@ class CryptoScanner:
             # 3. MA20
             ma20_series = sma(closes, 20)
             current_ma20 = ma20_series.iloc[-1] if not pd.isna(ma20_series.iloc[-1]) else closes.iloc[-1]
-            prev_ma20 = ma20_series.iloc[-2] if len(ma20_series) >= 2 and not pd.isna(ma20_series.iloc[-2]) else closes.iloc[-2]
+            prev_ma20 = ma20_series.iloc[-2] if len(ma20_series) >= 2 and not pd.isna(ma20_series.iloc[-2]) else \
+            closes.iloc[-2]
 
             # 4. 成交量均线
             volume_ma = sma(volumes, 20)
@@ -808,27 +811,27 @@ class CryptoScanner:
             # 检查动量早期启动条件
             # 条件1: RSI 在 40-55 之间，且从低位反弹（上一根K线RSI < 30）
             rsi_condition = (40 <= current_rsi <= rsi_high_threshold and
-                           prev_rsi < rsi_low_threshold)
+                             prev_rsi < rsi_low_threshold)
 
             # 条件2: MACD DIF > DEA 且柱状图刚从负转正
             macd_condition = (current_macd_line > current_signal_line and
-                            current_histogram > 0 and prev_histogram < 0)
+                              current_histogram > 0 and prev_histogram < 0)
 
             # 条件3: 成交量放大 >= 1.5倍均量
             volume_condition = current_volume >= current_volume_ma * volume_multiplier
 
             # 条件4: 价格刚刚突破 MA20
             price_condition = (current_price > current_ma20 and
-                             closes.iloc[-2] <= prev_ma20)  # 上一根K线还在MA20下方
+                               closes.iloc[-2] <= prev_ma20)  # 上一根K线还在MA20下方
 
             # 综合判断
             if rsi_condition and macd_condition and volume_condition and price_condition:
                 # 计算动量强度分数
                 momentum_score = (
-                    (current_rsi - 40) / 15 * 0.3 +  # RSI强度
-                    (current_histogram / abs(current_histogram + 0.001)) * 0.3 +  # MACD强度
-                    (current_volume / current_volume_ma - 1) * 0.2 +  # 成交量强度
-                    ((current_price - current_ma20) / current_ma20) * 0.2  # 价格突破强度
+                        (current_rsi - 40) / 15 * 0.3 +  # RSI强度
+                        (current_histogram / abs(current_histogram + 0.001)) * 0.3 +  # MACD强度
+                        (current_volume / current_volume_ma - 1) * 0.2 +  # 成交量强度
+                        ((current_price - current_ma20) / current_ma20) * 0.2  # 价格突破强度
                 )
 
                 return {
@@ -849,9 +852,9 @@ class CryptoScanner:
         return None
 
     def scan_volume_breakout(self, currency: str = 'USDT', bar: str = '5m',
-                           min_vol_ccy: float = 1000000, recent_periods: int = 3,
-                           base_periods: int = 20, volume_multiplier: float = 1.5,
-                           use_parallel: bool = True, use_cache: bool = True) -> list:
+                             min_vol_ccy: float = 1000000, recent_periods: int = 3,
+                             base_periods: int = 20, volume_multiplier: float = 1.5,
+                             use_parallel: bool = True, use_cache: bool = True) -> list:
         """
         扫描放量突破形态
 
@@ -904,8 +907,8 @@ class CryptoScanner:
             return []
 
     def _scan_volume_breakout_sequential(self, symbols: list, bar: str, limit: int,
-                                        recent_periods: int, base_periods: int,
-                                        volume_multiplier: float) -> list:
+                                         recent_periods: int, base_periods: int,
+                                         volume_multiplier: float) -> list:
         """顺序扫描放量突破形态"""
         volume_breakout_coins = []
 
@@ -924,8 +927,8 @@ class CryptoScanner:
         return volume_breakout_coins
 
     def _scan_volume_breakout_parallel(self, symbols: list, bar: str, limit: int,
-                                      recent_periods: int, base_periods: int,
-                                      volume_multiplier: float) -> list:
+                                       recent_periods: int, base_periods: int,
+                                       volume_multiplier: float) -> list:
         """并行扫描放量突破形态"""
         volume_breakout_coins = []
 
@@ -951,8 +954,8 @@ class CryptoScanner:
         return volume_breakout_coins
 
     def _analyze_symbol_volume_breakout(self, symbol: str, bar: str, limit: int,
-                                       recent_periods: int, base_periods: int,
-                                       volume_multiplier: float) -> dict:
+                                        recent_periods: int, base_periods: int,
+                                        volume_multiplier: float) -> dict:
         """
         分析单个币种的放量突破形态
 
@@ -1023,8 +1026,8 @@ class CryptoScanner:
                 price_breakout_ratio = (current_price - previous_high) / previous_high * 100
 
                 breakout_strength = (
-                    (volume_ratio - 1) * 0.6 +  # 成交量强度权重60%
-                    min(price_breakout_ratio / 5, 1) * 0.4  # 价格突破强度权重40%，限制在5%以内
+                        (volume_ratio - 1) * 0.6 +  # 成交量强度权重60%
+                        min(price_breakout_ratio / 5, 1) * 0.4  # 价格突破强度权重40%，限制在5%以内
                 )
 
                 return {
@@ -1046,9 +1049,9 @@ class CryptoScanner:
         return None
 
     def scan_slope_acceleration(self, currency: str = 'USDT', ma_periods: list = None,
-                               bar: str = '5m', min_vol_ccy: float = 1000000,
-                               use_parallel: bool = True, use_cache: bool = True,
-                               rsi_filter_enabled: bool = True) -> list:
+                                bar: str = '5m', min_vol_ccy: float = 1000000,
+                                use_parallel: bool = True, use_cache: bool = True,
+                                rsi_filter_enabled: bool = True) -> list:
         """
         扫描均线斜率加速形态（趋势刚开始加速）
 
@@ -1095,7 +1098,7 @@ class CryptoScanner:
             return []
 
     def _scan_slope_acceleration_sequential(self, symbols: list, ma_periods: list,
-                                          bar: str, limit: int, rsi_filter_enabled: bool = True) -> list:
+                                            bar: str, limit: int, rsi_filter_enabled: bool = True) -> list:
         """顺序扫描均线斜率加速形态"""
         slope_acceleration_coins = []
 
@@ -1112,13 +1115,14 @@ class CryptoScanner:
         return slope_acceleration_coins
 
     def _scan_slope_acceleration_parallel(self, symbols: list, ma_periods: list,
-                                        bar: str, limit: int, rsi_filter_enabled: bool = True) -> list:
+                                          bar: str, limit: int, rsi_filter_enabled: bool = True) -> list:
         """并行扫描均线斜率加速形态"""
         slope_acceleration_coins = []
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(symbols))) as executor:
             future_to_symbol = {
-                executor.submit(self._analyze_symbol_slope_acceleration, symbol, ma_periods, bar, limit, rsi_filter_enabled): symbol
+                executor.submit(self._analyze_symbol_slope_acceleration, symbol, ma_periods, bar, limit,
+                                rsi_filter_enabled): symbol
                 for symbol in symbols
             }
 
@@ -1135,7 +1139,7 @@ class CryptoScanner:
         return slope_acceleration_coins
 
     def _analyze_symbol_slope_acceleration(self, symbol: str, ma_periods: list,
-                                         bar: str, limit: int, rsi_filter_enabled: bool = True) -> dict:
+                                           bar: str, limit: int, rsi_filter_enabled: bool = True) -> dict:
         """
         分析单个币种的趋势启动早期加速形态
 
@@ -1209,7 +1213,7 @@ class CryptoScanner:
             # 综合判断
             # 基本条件：MA5加速、MA5斜率为正、MA20接近水平、价格在MA5上方
             basic_conditions = (ma5_accelerating and ma5_slope_positive and
-                              ma20_near_horizontal and price_above_ma5)
+                                ma20_near_horizontal and price_above_ma5)
 
             # 使用传递进来的RSI过滤参数
             if basic_conditions and (rsi_in_range or not rsi_filter_enabled):
@@ -1239,11 +1243,14 @@ class CryptoScanner:
         report = {
             'timestamp': datetime.now().isoformat(),
             'top_coins': self.scan_top_coins(10),
-            'ma_alignment_coins': self.scan_ma_alignment(min_vol_ccy=100000),  # Add MA alignment coins with volume filter
-            'ma_convergence_breakout_coins': self.scan_ma_convergence_breakout(min_vol_ccy=100000),  # Add MA convergence breakout coins
+            'ma_alignment_coins': self.scan_ma_alignment(min_vol_ccy=100000),
+            # Add MA alignment coins with volume filter
+            'ma_convergence_breakout_coins': self.scan_ma_convergence_breakout(min_vol_ccy=100000),
+            # Add MA convergence breakout coins
             'momentum_early_coins': self.scan_momentum_early(min_vol_ccy=100000),  # Add momentum early coins
             'volume_breakout_coins': self.scan_volume_breakout(min_vol_ccy=100000),  # Add volume breakout coins
-            'slope_acceleration_coins': self.scan_slope_acceleration(min_vol_ccy=100000, rsi_filter_enabled=True),  # Add slope acceleration coins
+            'slope_acceleration_coins': self.scan_slope_acceleration(min_vol_ccy=100000, rsi_filter_enabled=True),
+            # Add slope acceleration coins
             'volatility_data': [],
             'liquidity_data': []
         }
@@ -1306,9 +1313,9 @@ def main():
     logger.info("-" * 50)
     for coin in report['top_coins']:
         logger.info(f"{coin['rank']:2d}. {coin['symbol']:10s} | "
-              f"Price: ${coin['price']:>10.2f} | "
-              f"24h Change: {coin['price_change_24h']:>6.2f}% | "
-              f"Volume: ${coin['volume_24h']:>12,.0f}")
+                    f"Price: ${coin['price']:>10.2f} | "
+                    f"24h Change: {coin['price_change_24h']:>6.2f}% | "
+                    f"Volume: ${coin['volume_24h']:>12,.0f}")
 
     # Display MA alignment coins
     if report['ma_alignment_coins']:
@@ -1316,8 +1323,8 @@ def main():
         logger.info("-" * 50)
         for coin in report['ma_alignment_coins'][:10]:  # Show top 10 bullish coins
             logger.info(f"{coin['symbol']:12s} | "
-                  f"Price: ${coin['price']:>10.2f} | "
-                  f"Trend Strength: {coin['trend_strength']:>6.2f}%")
+                        f"Price: ${coin['price']:>10.2f} | "
+                        f"Trend Strength: {coin['trend_strength']:>6.2f}%")
     else:
         logger.info("\nNo bullish coins found with current criteria.")
 
@@ -1327,9 +1334,9 @@ def main():
         logger.info("-" * 50)
         for coin in report['ma_convergence_breakout_coins'][:10]:  # Show top 10 convergence breakout coins
             logger.info(f"{coin['symbol']:12s} | "
-                  f"Price: ${coin['current_price']:>10.2f} | "
-                  f"Convergence: {coin['convergence_ratio']:>5.2f}% | "
-                  f"Breakout: {coin['breakout_strength']:>5.2f}%")
+                        f"Price: ${coin['current_price']:>10.2f} | "
+                        f"Convergence: {coin['convergence_ratio']:>5.2f}% | "
+                        f"Breakout: {coin['breakout_strength']:>5.2f}%")
     else:
         logger.info("\nNo MA convergence + breakout coins found with current criteria.")
 
@@ -1339,10 +1346,10 @@ def main():
         logger.info("-" * 50)
         for coin in report['momentum_early_coins'][:10]:  # Show top 10 momentum early coins
             logger.info(f"{coin['symbol']:12s} | "
-                  f"Price: ${coin['current_price']:>10.2f} | "
-                  f"RSI: {coin['rsi']:>5.1f} | "
-                  f"MACD: {coin['macd_histogram']:>7.4f} | "
-                  f"Volume: {coin['volume_ratio']:>4.1f}x")
+                        f"Price: ${coin['current_price']:>10.2f} | "
+                        f"RSI: {coin['rsi']:>5.1f} | "
+                        f"MACD: {coin['macd_histogram']:>7.4f} | "
+                        f"Volume: {coin['volume_ratio']:>4.1f}x")
     else:
         logger.info("\nNo early momentum coins found with current criteria.")
 
@@ -1352,9 +1359,9 @@ def main():
         logger.info("-" * 50)
         for coin in report['volume_breakout_coins'][:10]:  # Show top 10 volume breakout coins
             logger.info(f"{coin['symbol']:12s} | "
-                  f"Price: ${coin['current_price']:>10.2f} | "
-                  f"Volume: {coin['volume_ratio']:>4.1f}x | "
-                  f"Breakout: {coin['price_breakout_ratio']:>5.2f}%")
+                        f"Price: ${coin['current_price']:>10.2f} | "
+                        f"Volume: {coin['volume_ratio']:>4.1f}x | "
+                        f"Breakout: {coin['price_breakout_ratio']:>5.2f}%")
     else:
         logger.info("\nNo volume breakout coins found with current criteria.")
 
@@ -1364,9 +1371,9 @@ def main():
         logger.info("-" * 50)
         for coin in report['slope_acceleration_coins'][:10]:  # Show top 10 slope acceleration coins
             logger.info(f"{coin['symbol']:12s} | "
-                  f"Price: ${coin['current_price']:>10.2f} | "
-                  f"Acceleration: {coin['acceleration_strength']:>7.4f} | "
-                  f"RSI: {coin['rsi']:>5.1f}")
+                        f"Price: ${coin['current_price']:>10.2f} | "
+                        f"Acceleration: {coin['acceleration_strength']:>7.4f} | "
+                        f"RSI: {coin['rsi']:>5.1f}")
     else:
         logger.info("\nNo slope acceleration coins found with current criteria.")
 
@@ -1375,17 +1382,17 @@ def main():
         logger.info("-" * 50)
         for vol in report['volatility_data']:
             logger.info(f"{vol['symbol']:10s} | "
-                  f"Volatility: {vol['volatility']:>6.2f} | "
-                  f"Avg Change: {vol['avg_price_change']:>6.2f}%")
+                        f"Volatility: {vol['volatility']:>6.2f} | "
+                        f"Avg Change: {vol['avg_price_change']:>6.2f}%")
 
     if report['liquidity_data']:
         logger.info("\nLiquidity Analysis (Top 5 coins):")
         logger.info("-" * 50)
         for liq in report['liquidity_data']:
             logger.info(f"{liq['symbol']:10s} | "
-                  f"Spread: {liq['spread_percent']:>5.2f}% | "
-                  f"Bid Volume: {liq['bid_volume']:>10.2f} | "
-                  f"Ask Volume: {liq['ask_volume']:>10.2f}")
+                        f"Spread: {liq['spread_percent']:>5.2f}% | "
+                        f"Bid Volume: {liq['bid_volume']:>10.2f} | "
+                        f"Ask Volume: {liq['ask_volume']:>10.2f}")
 
     logger.info("\n[INFO] For authenticated trading features, set your OKX API credentials in the .env file")
 
