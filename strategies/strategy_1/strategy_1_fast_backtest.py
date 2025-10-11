@@ -21,6 +21,7 @@ from apis.okx_api.client import OKXClient
 from apis.okx_api.market_data import MarketDataRetriever
 from strategies.strategy_1.strategy_1 import EMACrossoverStrategy
 from strategies.strategy_1.shared_config import load_config_from_file, get_user_input, print_final_config
+from strategies.strategy_1.methods.volatility_exit import check_volatility_exit_static
 from utils.logger import logger
 
 
@@ -31,7 +32,8 @@ class FastBacktest:
                  short_ma: int = 5, long_ma: int = 20,
                  mode: str = 'strict', trailing_stop_pct: float = 1.0,
                  assist_cond: str = 'volume', 
-                 buy_fee_rate: float = 0.0005, sell_fee_rate: float = 0.0005, **params):
+                 buy_fee_rate: float = 0.0005, sell_fee_rate: float = 0.0005,
+                 volatility_exit: bool = False, volatility_threshold: float = 0.5, **params):
         """
         Initialize Fast Backtest
         
@@ -43,6 +45,8 @@ class FastBacktest:
             mode: Mode ('strict' or 'loose')
             trailing_stop_pct: Trailing stop percentage
             assist_cond: Assist condition type ('volume', 'rsi', or None)
+            volatility_exit: Whether to enable volatility-based exit
+            volatility_threshold: Volatility threshold for exit (0.5 means 50% reduction)
             **params: Additional parameters for assist conditions
         """
         self.symbol = symbol
@@ -53,6 +57,10 @@ class FastBacktest:
         self.trailing_stop_pct = trailing_stop_pct
         self.assist_cond = assist_cond
         self.params = params
+        
+        # 波动率退出参数
+        self.volatility_exit = volatility_exit
+        self.volatility_threshold = volatility_threshold
         
         # 手续费参数
         self.buy_fee_rate = buy_fee_rate  # 买入手续费率 0.05%
@@ -89,6 +97,13 @@ class FastBacktest:
                 return True
         return False
     
+    def _check_volatility_exit(self, df: pd.DataFrame, current_index: int) -> bool:
+        """检查波动率退出条件"""
+        if not self.volatility_exit or self.position == 0:
+            return False
+        
+        return check_volatility_exit_static(df, current_index, self.short_ma, self.volatility_threshold)
+    
     def _calculate_return_rate(self, entry_price: float, exit_price: float, position: int) -> float:
         """
         计算考虑手续费后的净收益率
@@ -118,7 +133,7 @@ class FastBacktest:
         
         return return_rate
     
-    def execute_trade(self, signal: int, price: float, details: dict, timestamp: str):
+    def execute_trade(self, signal: int, price: float, details: dict, timestamp: str, df: pd.DataFrame = None, current_index: int = None):
         """执行交易逻辑"""
         action = "HOLD"
         exit_price = 0.0
@@ -126,6 +141,11 @@ class FastBacktest:
         trade_fee = 0.0  # 本次交易手续费
         
         trailing_stop_triggered = self._check_trailing_stop(price)
+        volatility_exit_triggered = False
+        
+        # 检查波动率退出条件
+        if df is not None and current_index is not None:
+            volatility_exit_triggered = self._check_volatility_exit(df, current_index)
         
         if self.position == 0:
             if signal == 1:
@@ -156,6 +176,15 @@ class FastBacktest:
                 self.position = 0
                 self.highest_price = 0.0
                 self.trade_count += 1
+            elif volatility_exit_triggered:
+                exit_price = price
+                return_rate = self._calculate_return_rate(self.entry_price, exit_price, self.position)
+                action = "LONG_CLOSE_VOLATILITY"
+                trade_fee = price * self.sell_fee_rate  # 平多仓卖出手续费
+                self.total_fee += trade_fee
+                self.position = 0
+                self.highest_price = 0.0
+                self.trade_count += 1
             elif signal == -1:
                 exit_price = price
                 return_rate = self._calculate_return_rate(self.entry_price, exit_price, self.position)
@@ -172,6 +201,15 @@ class FastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(self.entry_price, exit_price, self.position)
                 action = "SHORT_CLOSE_TRAILING_STOP"
+                trade_fee = price * self.buy_fee_rate  # 平空仓买入手续费
+                self.total_fee += trade_fee
+                self.position = 0
+                self.lowest_price = 0.0
+                self.trade_count += 1
+            elif volatility_exit_triggered:
+                exit_price = price
+                return_rate = self._calculate_return_rate(self.entry_price, exit_price, self.position)
+                action = "SHORT_CLOSE_VOLATILITY"
                 trade_fee = price * self.buy_fee_rate  # 平空仓买入手续费
                 self.total_fee += trade_fee
                 self.position = 0
@@ -246,7 +284,7 @@ class FastBacktest:
                     # 检查移动止损
                     self._check_trailing_stop(price)
                     # 执行交易
-                    self.execute_trade(signal, price, details, timestamp)
+                    self.execute_trade(signal, price, details, timestamp, df, i)
             
             return self.generate_report()
             
@@ -435,6 +473,8 @@ class FastBacktest:
             'mode': self.mode,
             'trailing_stop_pct': self.trailing_stop_pct,
             'assist_cond': self.assist_cond,
+            'volatility_exit': self.volatility_exit,
+            'volatility_threshold': self.volatility_threshold,
             'params': self.params,
             'total_trades': len(trades_df),
             'total_return_pct': total_return,
@@ -486,12 +526,14 @@ def save_report_to_excel(report: dict, output_dir: str = "backtest_results"):
         summary_data = {
             '指标': [
                 '交易对', 'K线周期', 'EMA参数', '模式', '移动止损', '辅助条件',
+                '波动率退出', '波动率阈值',
                 '总交易次数', '总收益率(%)', '手续费(%)', '净收益率(%)', '胜率(%)', 
                 '平均盈利(%)', '平均亏损(%)', '盈亏比', '夏普比率', '最大回撤(%)'
             ],
             '数值': [
                 report['symbol'], report['bar'], f"{report['short_ma']}/{report['long_ma']}",
                 report['mode'], f"{report['trailing_stop_pct']}%", report['assist_cond'],
+                '是' if report['volatility_exit'] else '否', f"{report['volatility_threshold']:.2f}",
                 report['total_trades'], f"{report['total_return_pct']:.2f}",
                 f"{report['total_fee_pct']:.2f}", f"{report['net_return_pct']:.2f}",
                 f"{report['win_rate_pct']:.2f}", f"{report['avg_win_pct']:.2f}",
@@ -506,11 +548,13 @@ def save_report_to_excel(report: dict, output_dir: str = "backtest_results"):
         config_data = {
             '参数': [
                 '交易对', 'K线周期', '短EMA周期', '长EMA周期', '模式', 
-                '移动止损(%)', '辅助条件', '成交量倍数', '确认百分比(%)', 'RSI周期'
+                '移动止损(%)', '辅助条件', '波动率退出', '波动率阈值',
+                '成交量倍数', '确认百分比(%)', 'RSI周期'
             ],
             '数值': [
                 report['symbol'], report['bar'], report['short_ma'], report['long_ma'],
                 report['mode'], report['trailing_stop_pct'], report['assist_cond'],
+                '是' if report['volatility_exit'] else '否', f"{report['volatility_threshold']:.2f}",
                 report['params'].get('vol_multiplier', 'N/A'),
                 report['params'].get('confirmation_pct', 'N/A'),
                 report['params'].get('rsi_period', 'N/A')
@@ -572,6 +616,9 @@ def print_report(report: dict):
     logger.info(f"模式: {report['mode']}")
     logger.info(f"移动止损: {report['trailing_stop_pct']}%")
     logger.info(f"辅助条件: {report['assist_cond']}")
+    logger.info(f"波动率退出: {'是' if report['volatility_exit'] else '否'}")
+    if report['volatility_exit']:
+        logger.info(f"波动率阈值: {report['volatility_threshold']:.2f}")
     
     if report['assist_cond'] == 'volume':
         logger.info(f"成交量倍数: {report['params'].get('vol_multiplier', 1.2)}")
@@ -657,6 +704,8 @@ def main():
     mode = config.get('mode', 'loose')
     trailing_stop_pct = config.get('trailing_stop_pct', 1.0)
     assist_cond = config.get('assist_cond', 'volume')
+    volatility_exit = config.get('volatility_exit', False)
+    volatility_threshold = config.get('volatility_threshold', 0.5)
     params = config.get('params', {})
     
     # 创建回测实例
@@ -668,6 +717,8 @@ def main():
         mode=mode,
         trailing_stop_pct=trailing_stop_pct,
         assist_cond=assist_cond,
+        volatility_exit=volatility_exit,
+        volatility_threshold=volatility_threshold,
         **params
     )
     

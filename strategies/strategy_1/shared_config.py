@@ -42,6 +42,8 @@ def get_user_input(default_config: dict = None) -> dict:
     default_trade_mode = default_config.get('trade_mode', 3)
     default_leverage = default_config.get('leverage', 3)
     default_assist_cond = default_config.get('assist_cond', 'volume')
+    default_volatility_exit = default_config.get('volatility_exit', False)
+    default_volatility_threshold = default_config.get('volatility_threshold', 0.5)
     default_params = default_config.get('params', {})
 
     try:
@@ -63,6 +65,18 @@ def get_user_input(default_config: dict = None) -> dict:
             trade = trade_input == 'y' or trade_input == 'yes'
         else:
             trade = default_trade
+
+        # 波动率退出条件
+        volatility_exit_input = input(f"是否启用波动率退出条件 (y/n, 默认 {'y' if default_volatility_exit else 'n'}): ").strip().lower()
+        if volatility_exit_input:
+            volatility_exit = volatility_exit_input == 'y' or volatility_exit_input == 'yes'
+        else:
+            volatility_exit = default_volatility_exit
+
+        volatility_threshold = default_volatility_threshold
+        if volatility_exit:
+            volatility_threshold_input = input(f"请输入波动率阈值 (默认 {default_volatility_threshold}): ").strip()
+            volatility_threshold = float(volatility_threshold_input) if volatility_threshold_input else default_volatility_threshold
 
         logger.info("辅助条件选择:")
         logger.info("1. 成交量放大 (volume)")
@@ -129,6 +143,8 @@ def get_user_input(default_config: dict = None) -> dict:
         trailing_stop_pct = default_trailing_stop_pct
         trade = default_trade
         assist_cond = default_assist_cond
+        volatility_exit = default_volatility_exit
+        volatility_threshold = default_volatility_threshold
         params = default_params.copy()
         trade_amount = default_trade_amount
         trade_mode = default_trade_mode
@@ -146,6 +162,8 @@ def get_user_input(default_config: dict = None) -> dict:
         'trade_mode': trade_mode,
         'leverage': leverage,
         'assist_cond': assist_cond,
+        'volatility_exit': volatility_exit,
+        'volatility_threshold': volatility_threshold,
         'params': params
     }
 
@@ -163,6 +181,8 @@ def print_final_config(config: dict):
     trade_mode = config.get('trade_mode', 3)
     leverage = config.get('leverage', 3)
     assist_cond = config.get('assist_cond', 'volume')
+    volatility_exit = config.get('volatility_exit', False)
+    volatility_threshold = config.get('volatility_threshold', 0.5)
     params = config.get('params', {})
 
     logger.info("\n" + "=" * 50)
@@ -174,6 +194,9 @@ def print_final_config(config: dict):
     logger.info(f"  移动止损: {trailing_stop_pct}%")
     logger.info(f"  真实交易: {'是' if trade else '否'}")
     logger.info(f"  辅助条件: {assist_cond if assist_cond else '无'}")
+    logger.info(f"  波动率退出: {'是' if volatility_exit else '否'}")
+    if volatility_exit:
+        logger.info(f"  波动率阈值: {volatility_threshold}")
     
     if assist_cond == 'volume':
         logger.info(f"  成交量倍数: {params.get('vol_multiplier', 1.2)}")

@@ -22,6 +22,7 @@ load_dotenv()
 
 from strategies.strategy_1.methods.monitor import Strategy1Monitor
 from strategies.strategy_1.methods.trader import Strategy1Trader
+from strategies.strategy_1.methods.volatility_exit import VolatilityExit
 from apis.okx_api.client import OKXClient
 from apis.okx_api.market_data import MarketDataRetriever
 from strategies.strategy_1.strategy_1 import EMACrossoverStrategy
@@ -35,7 +36,8 @@ class StrategyMonitor(Strategy1Monitor):
                  short_ma: int = 5, long_ma: int = 20,
                  mode: str = 'strict', trailing_stop_pct: float = 1.0,
                  trade: bool = False, trade_amount: float = 10.0,
-                 trade_mode: int = 3, leverage: int = 3, assist_cond: str = 'volume', **params):
+                 trade_mode: int = 3, leverage: int = 3, assist_cond: str = 'volume',
+                 volatility_exit: bool = False, volatility_threshold: float = 0.5, **params):
         """
         Initialize Strategy Monitor with unified mock/real trading logic
         
@@ -51,6 +53,8 @@ class StrategyMonitor(Strategy1Monitor):
             trade_mode: Trading mode (1=现货, 2=全仓杠杆, 3=逐仓杠杆)
             leverage: Leverage multiplier (default: 3x)
             assist_cond: Assist condition type ('volume', 'rsi', or None, default: 'volume')
+            volatility_exit: Whether to enable volatility-based exit
+            volatility_threshold: Volatility threshold for exit (0.5 means 50% reduction)
             **params: Additional parameters for assist conditions
                   vol_multiplier: Volume multiplier (default: 1.2)
                   confirmation_pct: Confirmation percentage (default: 0.2)
@@ -65,6 +69,10 @@ class StrategyMonitor(Strategy1Monitor):
         self.mode = mode
         self.trailing_stop_pct = trailing_stop_pct
         self.assist_cond = assist_cond
+        
+        # 波动率退出参数
+        self.volatility_exit = volatility_exit
+        self.volatility_threshold = volatility_threshold
         
         # 设置默认参数并合并用户提供的参数
         self.params = {
@@ -87,6 +95,9 @@ class StrategyMonitor(Strategy1Monitor):
         
         from sdk.base_monitor import BaseMonitor
         BaseMonitor.__init__(self, symbol, bar, trade_mode=trade)
+        
+        # 初始化波动率退出条件
+        self.volatility_exit_checker = VolatilityExit(short_ma, volatility_threshold)
         
         # 预加载instrument信息到缓存
         self._preload_instrument_info()
@@ -199,13 +210,24 @@ class StrategyMonitor(Strategy1Monitor):
                 return True
         return False
 
+    def _check_volatility_exit(self) -> bool:
+        """检查波动率退出条件"""
+        if not self.volatility_exit or self.mock_position == 0:
+            return False
+        
+        return self.volatility_exit_checker.check_volatility_exit(self.mock_position)
+
     def execute_trade(self, signal: int, price: float, details: dict):
         """Unified trading logic for both mock and real trading"""
         action = "HOLD"
         exit_price = 0.0
         return_rate = 0.0
 
+        # 更新波动率退出检查器的价格历史记录
+        self.volatility_exit_checker.update_price_history(price)
+
         trailing_stop_triggered = self._check_trailing_stop(price)
+        volatility_exit_triggered = self._check_volatility_exit()
 
         if self.mock_position == 0:
             if signal == 1:
@@ -230,6 +252,13 @@ class StrategyMonitor(Strategy1Monitor):
                 self.mock_position = 0
                 self.mock_highest_price = 0.0
                 self.trade_count += 1
+            elif volatility_exit_triggered:
+                exit_price = price
+                return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
+                action = "LONG_CLOSE_VOLATILITY"
+                self.mock_position = 0
+                self.mock_highest_price = 0.0
+                self.trade_count += 1
             elif signal == -1:
                 exit_price = price
                 return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
@@ -244,6 +273,13 @@ class StrategyMonitor(Strategy1Monitor):
                 exit_price = price
                 return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
                 action = "SHORT_CLOSE_TRAILING_STOP"
+                self.mock_position = 0
+                self.mock_lowest_price = 0.0
+                self.trade_count += 1
+            elif volatility_exit_triggered:
+                exit_price = price
+                return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
+                action = "SHORT_CLOSE_VOLATILITY"
                 self.mock_position = 0
                 self.mock_lowest_price = 0.0
                 self.trade_count += 1
@@ -315,7 +351,8 @@ class StrategyMonitor(Strategy1Monitor):
         logger.info(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
                     f"成交量倍数={self.params.get('vol_multiplier', 1.2)}, 确认百分比={self.params.get('confirmation_pct', 0.2)}%, "
                     f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%, "
-                    f"辅助条件={self.assist_cond if self.assist_cond else '无'}")
+                    f"辅助条件={self.assist_cond if self.assist_cond else '无'}, "
+                    f"波动率退出={'是' if self.volatility_exit else '否'}, 阈值={self.volatility_threshold}")
 
         if self.trade_mode:
             trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}
@@ -410,6 +447,8 @@ def get_user_input(default_config: dict = None) -> dict:
     default_trade_mode = default_config.get('trade_mode', 3)
     default_leverage = default_config.get('leverage', 3)
     default_assist_cond = default_config.get('assist_cond', 'volume')
+    default_volatility_exit = default_config.get('volatility_exit', False)
+    default_volatility_threshold = default_config.get('volatility_threshold', 0.5)
     default_params = default_config.get('params', {})
 
     try:
@@ -432,6 +471,18 @@ def get_user_input(default_config: dict = None) -> dict:
         else:
             trade = default_trade
 
+        # 波动率退出条件
+        volatility_exit_input = input(f"是否启用波动率退出条件 (y/n, 默认 {'y' if default_volatility_exit else 'n'}): ").strip().lower()
+        if volatility_exit_input:
+            volatility_exit = volatility_exit_input == 'y' or volatility_exit_input == 'yes'
+        else:
+            volatility_exit = default_volatility_exit
+
+        volatility_threshold = default_volatility_threshold
+        if volatility_exit:
+            volatility_threshold_input = input(f"请输入波动率阈值 (默认 {default_volatility_threshold}): ").strip()
+            volatility_threshold = float(volatility_threshold_input) if volatility_threshold_input else default_volatility_threshold
+
         logger.info("辅助条件选择:")
         logger.info("1. 成交量放大 (volume)")
         logger.info("2. RSI条件 (rsi)")
@@ -446,18 +497,19 @@ def get_user_input(default_config: dict = None) -> dict:
         # 根据选择的辅助条件动态获取对应的技术指标参数
         params = default_params.copy()  # 复制默认参数
         
-        # 设置默认的成交量参数
-        default_vol_multiplier = default_params.get('vol_multiplier', 1.2)
-        default_confirmation_pct = default_params.get('confirmation_pct', 0.2)
+        if assist_cond == 'volume':
+            # 成交量辅助条件：询问成交量相关参数
+            default_vol_multiplier = default_params.get('vol_multiplier', 1.2)
+            default_confirmation_pct = default_params.get('confirmation_pct', 0.2)
+            
+            vol_multiplier_input = input(f"请输入成交量放大倍数 (默认 {default_vol_multiplier}): ").strip()
+            params['vol_multiplier'] = float(vol_multiplier_input) if vol_multiplier_input else default_vol_multiplier
+            
+            confirmation_pct_input = input(f"请输入确认突破百分比 (默认 {default_confirmation_pct}%): ").strip()
+            params['confirmation_pct'] = float(confirmation_pct_input) if confirmation_pct_input else default_confirmation_pct
         
-        # 无论使用什么辅助条件，都设置成交量参数
-        vol_multiplier_input = input(f"请输入成交量放大倍数 (默认 {default_vol_multiplier}): ").strip()
-        params['vol_multiplier'] = float(vol_multiplier_input) if vol_multiplier_input else default_vol_multiplier
-        
-        confirmation_pct_input = input(f"请输入确认突破百分比 (默认 {default_confirmation_pct}%): ").strip()
-        params['confirmation_pct'] = float(confirmation_pct_input) if confirmation_pct_input else default_confirmation_pct
-
-        if assist_cond == 'rsi':
+        elif assist_cond == 'rsi':
+            # RSI辅助条件：询问RSI相关参数
             default_rsi_period = default_params.get('rsi_period', 9)
             rsi_period_input = input(f"请输入RSI周期 (默认 {default_rsi_period}): ").strip()
             params['rsi_period'] = int(rsi_period_input) if rsi_period_input else default_rsi_period
@@ -496,6 +548,8 @@ def get_user_input(default_config: dict = None) -> dict:
         trailing_stop_pct = default_trailing_stop_pct
         trade = default_trade
         assist_cond = default_assist_cond
+        volatility_exit = default_volatility_exit
+        volatility_threshold = default_volatility_threshold
         params = default_params.copy()
         trade_amount = default_trade_amount
         trade_mode = default_trade_mode
@@ -513,6 +567,8 @@ def get_user_input(default_config: dict = None) -> dict:
         'trade_mode': trade_mode,
         'leverage': leverage,
         'assist_cond': assist_cond,
+        'volatility_exit': volatility_exit,
+        'volatility_threshold': volatility_threshold,
         'params': params
     }
 
@@ -554,6 +610,8 @@ def main():
     trade_mode = config.get('trade_mode', 3)
     leverage = config.get('leverage', 3)
     assist_cond = config.get('assist_cond', 'volume')
+    volatility_exit = config.get('volatility_exit', False)
+    volatility_threshold = config.get('volatility_threshold', 0.5)
     params = config.get('params', {})
 
     # 打印最终使用的参数
@@ -566,6 +624,9 @@ def main():
     logger.info(f"  移动止损: {trailing_stop_pct}%")
     logger.info(f"  真实交易: {'是' if trade else '否'}")
     logger.info(f"  辅助条件: {assist_cond if assist_cond else '无'}")
+    logger.info(f"  波动率退出: {'是' if volatility_exit else '否'}")
+    if volatility_exit:
+        logger.info(f"  波动率阈值: {volatility_threshold}")
     
     if assist_cond == 'volume':
         logger.info(f"  成交量倍数: {params.get('vol_multiplier', 1.2)}")
@@ -595,6 +656,8 @@ def main():
         trade_mode=trade_mode,
         leverage=leverage,
         assist_cond=assist_cond,
+        volatility_exit=volatility_exit,
+        volatility_threshold=volatility_threshold,
         **params
     )
 
