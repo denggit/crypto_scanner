@@ -21,7 +21,7 @@ from strategies.strategy_1.strategy_1 import EMACrossoverStrategy
 
 
 class StrategyMonitor(Strategy1Monitor):
-    """Strategy Monitor with Trading Support"""
+    """Strategy Monitor with Unified Logic for Mock and Real Trading"""
     
     def __init__(self, symbol: str, bar: str = '1m',
                  short_ma: int = 5, long_ma: int = 20,
@@ -30,7 +30,7 @@ class StrategyMonitor(Strategy1Monitor):
                  trade: bool = False, trade_amount: float = 10.0,
                  trade_mode: int = 3, leverage: int = 3):
         """
-        Initialize Strategy Monitor with optional trading support
+        Initialize Strategy Monitor with unified mock/real trading logic
         
         Args:
             symbol: Trading pair symbol
@@ -41,23 +41,15 @@ class StrategyMonitor(Strategy1Monitor):
             confirmation_pct: Confirmation percentage
             mode: Mode ('strict' or 'loose')
             trailing_stop_pct: Trailing stop percentage
-            trade: Whether to execute real trades
+            trade: Whether to execute real trades (True) or mock trades (False)
             trade_amount: USDT amount for each trade
             trade_mode: Trading mode (1=现货, 2=全仓杠杆, 3=逐仓杠杆)
             leverage: Leverage multiplier (default: 3x)
         """
-        self.trade = trade
         self.trade_amount = trade_amount
+        self.trade_mode_setting = trade_mode
+        self.leverage = leverage
         
-        if trade:
-            data_dir = "trade_data"
-            file_prefix = "trade"
-        else:
-            data_dir = "../../tools/monitor_data"
-            file_prefix = "strategy_monitor"
-        
-        self.symbol = symbol
-        self.bar = bar
         self.short_ma = short_ma
         self.long_ma = long_ma
         self.vol_multiplier = vol_multiplier
@@ -66,76 +58,106 @@ class StrategyMonitor(Strategy1Monitor):
         self.trailing_stop_pct = trailing_stop_pct
         
         from sdk.base_monitor import BaseMonitor
-        BaseMonitor.__init__(self, symbol, bar, data_dir, file_prefix)
+        BaseMonitor.__init__(self, symbol, bar, trade_mode=trade)
         
         self.client = OKXClient()
         self.strategy = EMACrossoverStrategy(self.client)
         self.market_data_retriever = MarketDataRetriever(self.client)
         
-        if self.trade:
-            self.trader = Strategy1Trader(self.client, trade_amount, trade_mode, leverage)
+        self.trader = Strategy1Trader(self.client, trade_amount, trade_mode, leverage)
+    
+    def get_csv_headers(self) -> list:
+        """Get CSV headers for recording data"""
+        return [
+            'timestamp', 'symbol', 'price', 'ema5', 'ema20', 'ema20_slope',
+            'volume_expansion', 'volume_ratio', 'signal', 'action',
+            'position', 'entry_price', 'exit_price', 'return_rate'
+        ]
+    
+    def get_trader(self):
+        """Get trader instance"""
+        return self.trader
+    
+    def _check_trailing_stop(self, price: float) -> bool:
+        """Check trailing stop condition for mock position"""
+        if self.mock_position == 1:
+            # 持多仓：更新最高价，检查是否跌破止损价
+            if price > self.mock_highest_price:
+                self.mock_highest_price = price
+            stop_price = self.mock_highest_price * (1 - self.trailing_stop_pct / 100.0)
+            if price <= stop_price:
+                return True
+        elif self.mock_position == -1:
+            # 持空仓：更新最低价，检查是否涨破止损价
+            if price < self.mock_lowest_price:
+                self.mock_lowest_price = price
+            stop_price = self.mock_lowest_price * (1 + self.trailing_stop_pct / 100.0)
+            if price >= stop_price:
+                return True
+        return False
     
     def execute_trade(self, signal: int, price: float, details: dict):
-        """Execute trade with optional real trading support"""
+        """Unified trading logic for both mock and real trading"""
         action = "HOLD"
         exit_price = 0.0
         return_rate = 0.0
         
         trailing_stop_triggered = self._check_trailing_stop(price)
         
-        if self.position == 0:
+        if self.mock_position == 0:
             if signal == 1:
-                self.position = 1
-                self.entry_price = price
-                self.highest_price = price
-                self.lowest_price = 0.0
+                self.mock_position = 1
+                self.mock_entry_price = price
+                self.mock_highest_price = price  # 持多仓时记录最高价
+                self.mock_lowest_price = price   # 持多仓时也记录最低价用于参考
                 action = "LONG_OPEN"
                 self.trade_count += 1
             elif signal == -1:
-                self.position = -1
-                self.entry_price = price
-                self.lowest_price = price
-                self.highest_price = 0.0
+                self.mock_position = -1
+                self.mock_entry_price = price
+                self.mock_lowest_price = price   # 持空仓时记录最低价
+                self.mock_highest_price = price  # 持空仓时也记录最高价用于参考
                 action = "SHORT_OPEN"
                 self.trade_count += 1
         else:
-            if self.position == 1:
+            if self.mock_position == 1:
                 if trailing_stop_triggered:
                     exit_price = price
-                    return_rate = (exit_price - self.entry_price) / self.entry_price
+                    return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
                     action = "LONG_CLOSE_TRAILING_STOP"
-                    self.position = 0
-                    self.highest_price = 0.0
+                    self.mock_position = 0
+                    self.mock_highest_price = 0.0
                     self.trade_count += 1
                 elif signal == -1:
                     exit_price = price
-                    return_rate = (exit_price - self.entry_price) / self.entry_price
+                    return_rate = (exit_price - self.mock_entry_price) / self.mock_entry_price
                     action = "LONG_CLOSE_SHORT_OPEN"
-                    self.position = -1
-                    self.entry_price = price
-                    self.highest_price = 0.0
-                    self.lowest_price = price
+                    self.mock_position = -1
+                    self.mock_entry_price = price
+                    self.mock_highest_price = price  # 重新初始化
+                    self.mock_lowest_price = price   # 重新初始化
                     self.trade_count += 1
-            elif self.position == -1:
+            elif self.mock_position == -1:
                 if trailing_stop_triggered:
                     exit_price = price
-                    return_rate = (self.entry_price - exit_price) / self.entry_price
+                    return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
                     action = "SHORT_CLOSE_TRAILING_STOP"
-                    self.position = 0
-                    self.lowest_price = 0.0
+                    self.mock_position = 0
+                    self.mock_lowest_price = 0.0
                     self.trade_count += 1
                 elif signal == 1:
                     exit_price = price
-                    return_rate = (self.entry_price - exit_price) / self.entry_price
+                    return_rate = (self.mock_entry_price - exit_price) / self.mock_entry_price
                     action = "SHORT_CLOSE_LONG_OPEN"
-                    self.position = 1
-                    self.entry_price = price
-                    self.lowest_price = 0.0
-                    self.highest_price = price
+                    self.mock_position = 1
+                    self.mock_entry_price = price
+                    self.mock_lowest_price = price   # 重新初始化
+                    self.mock_highest_price = price  # 重新初始化
                     self.trade_count += 1
         
         if action != "HOLD":
-            record = {
+            # 记录模拟交易数据（始终记录）
+            mock_record = {
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'symbol': self.symbol,
                 'price': price,
@@ -146,28 +168,55 @@ class StrategyMonitor(Strategy1Monitor):
                 'volume_ratio': details.get('volume_ratio', 0),
                 'signal': signal,
                 'action': action,
-                'position': self.position,
-                'entry_price': self.entry_price,
+                'position': self.mock_position,
+                'entry_price': self.mock_entry_price,
                 'exit_price': exit_price,
                 'return_rate': return_rate
             }
+            self._enqueue_mock_write(mock_record)
             
-            self._enqueue_write(record)
+            # 如果是真实交易模式，执行真实交易并记录真实交易数据
+            if self.trade_mode:
+                # 执行真实交易
+                trade_result = self.trader.execute_trade(action, self.symbol, price)
+                
+                # 记录真实交易数据
+                if trade_result:
+                    real_record = {
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'symbol': self.symbol,
+                        'action': action,
+                        'order_id': trade_result.ordId if hasattr(trade_result, 'ordId') else '',
+                        'order_price': trade_result.px if hasattr(trade_result, 'px') else price,
+                        'order_size': trade_result.sz if hasattr(trade_result, 'sz') else self.trade_amount,
+                        'order_type': trade_result.ordType if hasattr(trade_result, 'ordType') else 'market',
+                        'order_side': trade_result.side if hasattr(trade_result, 'side') else '',
+                        'order_state': trade_result.state if hasattr(trade_result, 'state') else '',
+                        'filled_size': trade_result.accFillSz if hasattr(trade_result, 'accFillSz') else 0,
+                        'avg_fill_price': trade_result.avgPx if hasattr(trade_result, 'avgPx') else price,
+                        'fee': trade_result.fee if hasattr(trade_result, 'fee') else 0,
+                        'trade_timestamp': trade_result.ts if hasattr(trade_result, 'ts') else int(datetime.now().timestamp() * 1000)
+                    }
+                    self._enqueue_real_write(real_record)
             
-            mode_text = "[真实交易]" if self.trade else "[模拟交易]"
-            print(f"{mode_text} [{record['timestamp']}] {self.symbol} {action}: "
+            mode_prefix = self.get_mode_prefix()
+            print(f"{mode_prefix} [{mock_record['timestamp']}] {self.symbol} {action}: "
                   f"价格={price:.4f}, 信号={signal}, 收益率={return_rate*100:.2f}%")
-            
-            if self.trade:
-                self.trader.execute_trade(action, self.symbol, price)
     
     def run(self):
-        """Run monitoring loop with optional trading support"""
-        mode_text = "真实交易" if self.trade else "模拟监控"
+        """Run monitoring loop with unified mock/real trading logic"""
+        mode_text = "真实交易" if self.trade_mode else "模拟监控"
         print(f"开始{mode_text} {self.symbol} 的EMA交叉策略...")
         print(f"策略参数: EMA{self.short_ma}/EMA{self.long_ma}, "
               f"成交量倍数={self.vol_multiplier}, 确认百分比={self.confirmation_pct}%, "
               f"模式={self.mode}, 移动止损={self.trailing_stop_pct}%")
+        
+        if self.trade_mode:
+            trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}
+            print(f"交易模式: {trade_mode_names.get(self.trade_mode_setting, '未知')}, "
+                  f"每次交易金额: {self.trade_amount} USDT")
+            if self.trade_mode_setting in [2, 3]:
+                print(f"杠杆倍数: {self.leverage}x")
         
         try:
             while True:
@@ -191,7 +240,7 @@ class StrategyMonitor(Strategy1Monitor):
                         
                         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
                               f"{self.symbol} 价格: {price:.4f}, 信号: {signal}, "
-                              f"仓位: {self.position}, 交易次数: {self.trade_count}")
+                              f"模拟仓位: {self.mock_position}, 交易次数: {self.trade_count}")
                     else:
                         print(f"无法获取 {self.symbol} 的价格数据")
                 
@@ -203,8 +252,11 @@ class StrategyMonitor(Strategy1Monitor):
         except KeyboardInterrupt:
             print("\n监控已停止")
             print(f"总交易次数: {self.trade_count}")
-            print(f"记录文件: {self.csv_file}")
-            print(f"备份文件: {self.backup_file}")
+            print(f"模拟记录文件: {self.mock_csv_file}")
+            print(f"模拟备份文件: {self.mock_backup_file}")
+            if self.trade_mode:
+                print(f"真实记录文件: {self.real_csv_file}")
+                print(f"真实备份文件: {self.real_backup_file}")
         except Exception as e:
             print(f"监控过程中出错: {e}")
 

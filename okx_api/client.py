@@ -259,7 +259,7 @@ class OKXClient:
 
     def place_order(self, instId: str, tdMode: str, side: str, ordType: str,
                    sz: str = None, px: str = None, reduceOnly: bool = False, 
-                   tgtCcy: str = None) -> Dict:
+                   tgtCcy: str = 'quote_ccy') -> Dict:
         """
         Place order (requires authentication)
 
@@ -314,7 +314,7 @@ class OKXClient:
             params['state'] = state
         return self._make_request('GET', endpoint, params, signed=True)
     
-    def set_leverage(self, instId: str, lever: str, mgnMode: str, posSide: str = None) -> Dict:
+    def set_leverage(self, instId: str, lever: str, mgnMode: str = 'isolated', posSide: str = 'long') -> Dict:
         """
         Set leverage for instrument (requires authentication)
         
@@ -331,10 +331,9 @@ class OKXClient:
         params = {
             'instId': instId,
             'lever': lever,
-            'mgnMode': mgnMode
+            'mgnMode': mgnMode,
+            'posSide': posSide
         }
-        if posSide:
-            params['posSide'] = posSide
         return self._make_request('POST', endpoint, params, signed=True)
     
     def get_positions(self, instId: str = None) -> Dict:

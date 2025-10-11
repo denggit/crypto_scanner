@@ -17,7 +17,7 @@ class Trader:
         self.client = client
 
     def place_market_order(self, instId: str, side: str, sz: str, tdMode: str = 'cash', 
-                           reduceOnly: bool = False, tgtCcy: str = None) -> Optional[Order]:
+                           reduceOnly: bool = False, tgtCcy: str = 'quote_ccy') -> Optional[Order]:
         """
         Place a market order
 
@@ -26,6 +26,8 @@ class Trader:
             side: Order side ('buy' or 'sell')
             sz: Quantity
             tdMode: Trade mode ('cash', 'cross', 'isolated')
+            reduceOnly: Reduce only flag
+            tgtCcy: Order quantity unit (base_ccy, quote_ccy)
 
         Returns:
             Order object if successful, None otherwise
@@ -35,7 +37,9 @@ class Trader:
             tdMode=tdMode,
             side=side,
             ordType='market',
-            sz=sz
+            sz=sz,
+            reduceOnly=reduceOnly,
+            tgtCcy=tgtCcy
         )
 
         if response.get('code') == '0' and 'data' in response:

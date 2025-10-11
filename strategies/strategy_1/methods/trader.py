@@ -42,7 +42,7 @@ class Strategy1Trader(BaseTrader):
         Returns:
             Instrument ID for OKX API
         """
-        if self.is_leverage_mode():
+        if self.is_leverage_mode() and not symbol.endswith("-SWAP"):
             return f"{symbol}-SWAP"
         return symbol
     
@@ -66,19 +66,28 @@ class Strategy1Trader(BaseTrader):
         
         try:
             mgn_mode = self.get_margin_mode()
-            result = self.client.set_leverage(
+            result_long = self.client.set_leverage(
                 instId=inst_id,
                 lever=str(self.leverage),
                 mgnMode=mgn_mode,
-                posSide='net'
+                posSide='long'
+            )
+            result_short = self.client.set_leverage(
+                instId=inst_id,
+                lever=str(self.leverage),
+                mgnMode=mgn_mode,
+                posSide='short'
             )
             
-            if result.get('code') == '0':
+            if result_long.get('code') == '0' and result_short.get('code') == '0':
                 print(f"✅ 杠杆设置成功: {inst_id} {self.leverage}x {mgn_mode}")
                 self.leverage_setup_done[inst_id] = True
                 return True
-            else:
-                print(f"⚠️  杠杆设置失败: {result.get('msg', 'Unknown error')}")
+            elif result_long.get('code') != '0':
+                print(f"⚠️  开多杠杆设置失败: {result_long.get('msg', 'Unknown error')}")
+                return False
+            elif result_short.get('code') != '0':
+                print(f"⚠️  开空杠杆设置失败: {result_short.get('msg', 'Unknown error')}")
                 return False
         except Exception as e:
             print(f"⚠️  杠杆设置异常: {e}")
@@ -95,7 +104,10 @@ class Strategy1Trader(BaseTrader):
         Returns:
             Order object if successful, None otherwise
         """
-        self.setup_leverage(symbol)
+        # 强制设置杠杆（只在第一次需要）
+        if not self.setup_leverage(symbol):
+            print(f"❌ {symbol} 杠杆设置失败，取消开多交易")
+            return None
         
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
@@ -120,7 +132,10 @@ class Strategy1Trader(BaseTrader):
         Returns:
             Order object if successful, None otherwise
         """
-        self.setup_leverage(symbol)
+        # 强制设置杠杆（只在第一次需要）
+        if not self.setup_leverage(symbol):
+            print(f"❌ {symbol} 杠杆设置失败，取消开空交易")
+            return None
         
         inst_id = self._get_inst_id(symbol)
         td_mode = self.get_td_mode()
@@ -204,7 +219,8 @@ class Strategy1Trader(BaseTrader):
                             side='buy',
                             sz=available_sz,
                             tdMode=td_mode,
-                            reduceOnly=True
+                            reduceOnly=True,
+                            leverage=self.leverage if self.is_leverage_mode() else None
                         )
                         return order
         else:
