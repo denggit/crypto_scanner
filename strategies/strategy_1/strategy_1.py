@@ -48,12 +48,14 @@ class EMACrossoverStrategy:
                   loose mode: 允许前一根放量（更激进，适合山寨）
             assist_cond: 辅助条件类型 ('volume', 'rsi', or None, default: 'volume')
                   volume: 要求成交量放大
-                  rsi: 要求RSI条件满足（做多时RSI>55，做空时RSI<45）
+                  rsi: 要求RSI条件满足（做多时RSI>rsi_long_entry，做空时RSI<rsi_short_entry）
                   None: 不使用辅助条件
             **params: 辅助条件的具体参数
                   vol_multiplier: 成交量放大倍数 (default: 1.2)
                   confirmation_pct: 确认突破百分比 (default: 0.2)
                   rsi_period: RSI计算周期 (default: 9)
+                  rsi_long_entry: 做多RSI阈值 (default: 55)
+                  rsi_short_entry: 做空RSI阈值 (default: 45)
             
         Returns:
             int: 信号值 (1=买入, -1=卖出, 0=持有)
@@ -170,7 +172,8 @@ class EMACrossoverStrategy:
             if assist_cond == 'volume':
                 buy_condition = buy_condition and volume_expansion
             elif assist_cond == 'rsi':
-                buy_condition = buy_condition and (current_rsi > 55)
+                rsi_long_entry = params.get('rsi_long_entry', 55)
+                buy_condition = buy_condition and (current_rsi > rsi_long_entry)
             
             if buy_condition:
                 return 1
@@ -180,7 +183,8 @@ class EMACrossoverStrategy:
             if assist_cond == 'volume':
                 sell_condition = sell_condition and volume_expansion
             elif assist_cond == 'rsi':
-                sell_condition = sell_condition and (current_rsi < 45)
+                rsi_short_entry = params.get('rsi_short_entry', 45)
+                sell_condition = sell_condition and (current_rsi < rsi_short_entry)
             
             if sell_condition:
                 return -1
@@ -212,6 +216,8 @@ class EMACrossoverStrategy:
                   vol_multiplier: 成交量放大倍数 (default: 1.2)
                   confirmation_pct: 确认突破百分比 (default: 0.2)
                   rsi_period: RSI计算周期 (default: 9)
+                  rsi_long_entry: 做多RSI阈值 (default: 55)
+                  rsi_short_entry: 做空RSI阈值 (default: 45)
             
         Returns:
             dict: 包含策略计算详情的字典

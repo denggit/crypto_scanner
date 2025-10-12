@@ -106,8 +106,17 @@ def get_user_input(default_config: dict = None) -> dict:
         elif assist_cond == 'rsi':
             # RSI辅助条件：询问RSI相关参数
             default_rsi_period = default_params.get('rsi_period', 9)
+            default_rsi_long_entry = default_params.get('rsi_long_entry', 55)
+            default_rsi_short_entry = default_params.get('rsi_short_entry', 45)
+            
             rsi_period_input = input(f"请输入RSI周期 (默认 {default_rsi_period}): ").strip()
             params['rsi_period'] = int(rsi_period_input) if rsi_period_input else default_rsi_period
+            
+            rsi_long_entry_input = input(f"请输入做多RSI阈值 (默认 {default_rsi_long_entry}): ").strip()
+            params['rsi_long_entry'] = int(rsi_long_entry_input) if rsi_long_entry_input else default_rsi_long_entry
+            
+            rsi_short_entry_input = input(f"请输入做空RSI阈值 (默认 {default_rsi_short_entry}): ").strip()
+            params['rsi_short_entry'] = int(rsi_short_entry_input) if rsi_short_entry_input else default_rsi_short_entry
 
         trade_amount = default_trade_amount
         trade_mode = default_trade_mode
@@ -203,6 +212,8 @@ def print_final_config(config: dict):
         logger.info(f"  确认百分比: {params.get('confirmation_pct', 0.2)}%")
     elif assist_cond == 'rsi':
         logger.info(f"  RSI周期: {params.get('rsi_period', 9)}")
+        logger.info(f"  做多RSI阈值: {params.get('rsi_long_entry', 55)}")
+        logger.info(f"  做空RSI阈值: {params.get('rsi_short_entry', 45)}")
     
     if trade:
         trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}

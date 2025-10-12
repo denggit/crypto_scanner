@@ -13,6 +13,8 @@
   "params": {
     "vol_multiplier": 1.2,
     "confirmation_pct": 0.2,
-    "rsi_period": 9
+    "rsi_period": 9,
+    "rsi_long_entry": 55,
+    "rsi_short_entry": 45
   }
 }

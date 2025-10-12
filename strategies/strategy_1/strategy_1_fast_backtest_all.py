@@ -214,10 +214,12 @@ class BatchFastBacktest:
                 # RSI条件
                 if i < len(rsi_values):
                     current_rsi = rsi_values.iloc[i]
+                    rsi_long_entry = self.params.get('rsi_long_entry', 55)
+                    rsi_short_entry = self.params.get('rsi_short_entry', 45)
                     if ema_cross_up:
-                        assist_condition_met = current_rsi > 55
+                        assist_condition_met = current_rsi > rsi_long_entry
                     elif ema_cross_down:
-                        assist_condition_met = current_rsi < 45
+                        assist_condition_met = current_rsi < rsi_short_entry
             else:
                 # 无辅助条件
                 assist_condition_met = True

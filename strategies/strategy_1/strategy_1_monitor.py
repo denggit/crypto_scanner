@@ -110,7 +110,7 @@ class StrategyMonitor(Strategy1Monitor):
         """
         try:
             # 获取交易对的实际instrument ID（考虑杠杆模式）
-            inst_id = self.trader._get_inst_id(self.symbol)
+            inst_id = self.trader.get_inst_id(self.symbol)
             
             logger.info(f"正在预加载instrument信息: {inst_id}")
             
