@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 @Author     : Zijun Deng
-@Date       : 10/12/25 12:50 PM
-@File       : strategy_2.py
+@Date       : 10/12/25 2:42 PM
+@File       : __init__.py.py
 @Description: 
 """

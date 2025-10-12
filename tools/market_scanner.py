@@ -244,7 +244,7 @@ class CryptoScanner:
 
         return symbols
 
-    def _get_volume_filtered_symbols(self, currency: str, min_vol_ccy: float, use_cache: bool = True) -> list:
+    def _get_volume_filtered_symbols(self, currency: str, min_vol_ccy: float, use_cache: bool = True, inst_type='SPOT') -> list:
         """Get symbols filtered by 24h volume using market_data_retriever method"""
         cache_key = f"tickers_{currency}_{min_vol_ccy}"
         current_time = time.time()
@@ -257,7 +257,7 @@ class CryptoScanner:
         try:
             # Use the new method from market_data_retriever
             filtered_symbols = self.market_data_retriever.get_volume_filtered_symbols(
-                 'SPOT', currency, min_vol_ccy
+                 inst_type, currency, min_vol_ccy
             )
 
             if use_cache:

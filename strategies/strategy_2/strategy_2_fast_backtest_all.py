@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 @Author     : Zijun Deng
-@Date       : 10/12/25 5:05 AM
-@File       : strategy_1_fast_backtest_all.py
-@Description: EMA交叉策略批量快速回测系统 - 自动扫描高交易量币种并批量回测
+@Date       : 10/12/25 2:42 PM
+@File       : strategy_2_fast_backtest_all.py
+@Description: 高频短线策略批量快速回测系统 - 自动扫描高交易量币种并批量回测
 """
 
 import argparse
@@ -21,9 +21,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from apis.okx_api.client import OKXClient
 from apis.okx_api.market_data import MarketDataRetriever
-from strategies.strategy_1.strategy_1 import EMACrossoverStrategy
-from strategies.strategy_1.shared_config import load_config_from_file, get_user_input, print_final_config
-from strategies.strategy_1.methods.volatility_exit import check_volatility_exit_static
+from strategies.strategy_2.strategy_2 import HighFrequencyStrategy
+from strategies.strategy_2.shared_config import load_config_from_file, get_user_input, print_final_config
 from tools.market_scanner import CryptoScanner
 from utils.logger import logger
 
@@ -32,48 +31,45 @@ class BatchFastBacktest:
     """批量快速回测类"""
     
     def __init__(self, bar: str = '1m',
-                 short_ma: int = 5, long_ma: int = 20,
-                 mode: str = 'strict', trailing_stop_pct: float = 1.0,
-                 assist_cond: str = 'volume', 
-                 buy_fee_rate: float = 0.0005, sell_fee_rate: float = 0.0005,
-                 volatility_exit: bool = False, volatility_threshold: float = 0.5, **params):
+                 consecutive_bars: int = 2, atr_period: int = 14,
+                 atr_threshold: float = 0.8, trailing_stop_pct: float = 0.8,
+                 volume_factor: float = 1.2, use_volume: bool = True,
+                 buy_fee_rate: float = 0.0005, sell_fee_rate: float = 0.0005):
         """
         Initialize Batch Fast Backtest
         
         Args:
             bar: K-line time interval
-            short_ma: Short EMA period
-            long_ma: Long EMA period
-            mode: Mode ('strict' or 'loose')
+            consecutive_bars: Number of consecutive bars for breakout
+            atr_period: ATR period
+            atr_threshold: ATR threshold multiplier
             trailing_stop_pct: Trailing stop percentage
-            assist_cond: Assist condition type ('volume', 'rsi', or None)
-            volatility_exit: Whether to enable volatility-based exit
-            volatility_threshold: Volatility threshold for exit (0.5 means 50% reduction)
-            **params: Additional parameters for assist conditions
+            volume_factor: Volume expansion factor
+            use_volume: Whether to use volume condition
         """
         self.bar = bar
-        self.short_ma = short_ma
-        self.long_ma = long_ma
-        self.mode = mode
+        self.consecutive_bars = consecutive_bars
+        self.atr_period = atr_period
+        self.atr_threshold = atr_threshold
         self.trailing_stop_pct = trailing_stop_pct
-        self.assist_cond = assist_cond
-        self.params = params
-        
-        # 波动率退出参数
-        self.volatility_exit = volatility_exit
-        self.volatility_threshold = volatility_threshold
+        self.volume_factor = volume_factor
+        self.use_volume = use_volume
         
         # 手续费参数
         self.buy_fee_rate = buy_fee_rate  # 买入手续费率 0.05%
         self.sell_fee_rate = sell_fee_rate  # 卖出手续费率 0.05%
         
         self.client = OKXClient()
-        self.strategy = EMACrossoverStrategy(self.client)
+        self.strategy = HighFrequencyStrategy(self.client)
         self.market_data_retriever = MarketDataRetriever(self.client)
         self.scanner = CryptoScanner(self.client)
         
         # 批量回测结果
         self.batch_results = []
+        
+        # 缓存技术指标计算
+        self._atr_cache = {}
+        self._volume_cache = {}
     
     def run_single_backtest(self, symbol: str, limit: int = 300):
         """运行单个币种的快速回测"""
@@ -96,11 +92,11 @@ class BatchFastBacktest:
             close_trades = []
             
             # 批量计算所有K线的信号和详细信息
-            signals, details_list = self._calculate_signals_in_bulk(df, symbol)
+            signals, details_list, typical_prices = self._calculate_signals_in_bulk(df, symbol)
             
             # 按时间顺序处理每根K线
             for i in range(len(df)):
-                if i < max(self.long_ma, 10):  # 确保有足够的数据计算指标
+                if i < max(self.atr_period, self.consecutive_bars + 1, 21):  # 确保有足够的数据计算指标
                     continue
                     
                 signal = signals[i]
@@ -111,7 +107,8 @@ class BatchFastBacktest:
                     # 执行交易逻辑
                     trade_result = self._execute_trade_logic(
                         signal, price, details, position, entry_price, 
-                        highest_price, lowest_price, trade_count, total_fee, close_trades
+                        highest_price, lowest_price, trade_count, total_fee, close_trades,
+                        df, typical_prices, i
                     )
                     
                     position = trade_result['position']
@@ -140,122 +137,101 @@ class BatchFastBacktest:
         
         # 获取价格和成交量数据
         closes = df['c'] if 'c' in df.columns else df['close']
+        highs = df['h'] if 'h' in df.columns else df['high']
+        lows = df['l'] if 'l' in df.columns else df['low']
         volumes = df['vol'] if 'vol' in df.columns else df['volume']
         
-        # 计算EMA
-        from tools.technical_indicators import ema, rsi
-        ema_short = ema(closes, self.short_ma)
-        ema_long = ema(closes, self.long_ma)
+        # 计算典型价格 (high + low + close) / 3
+        typical_prices = (highs + lows + closes) / 3
+        
+        # 计算ATR - 使用缓存
+        from tools.technical_indicators import atr
+        cache_key = f"{symbol}_{self.bar}_{self.atr_period}"
+        if cache_key in self._atr_cache:
+            atr_values = self._atr_cache[cache_key]
+        else:
+            atr_values = atr(df, self.atr_period)
+            self._atr_cache[cache_key] = atr_values
         
         # 计算成交量条件
-        vol_window = 10 if self.bar in ['1m', '3m', '5m'] else 7
-        volume_ratios = []
         volume_expansions = []
+        volume_ratios = []
         
         for i in range(len(volumes)):
-            if i < vol_window:
-                volume_ratios.append(0)
+            if i < 21:  # 前20根K线平均成交量
                 volume_expansions.append(False)
+                volume_ratios.append(0)
                 continue
             
             current_volume = volumes.iloc[i]
-            avg_volume = volumes.iloc[i-vol_window:i].mean()
+            avg_volume = volumes.iloc[i-20:i].mean()
             volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
             volume_ratios.append(volume_ratio)
-            volume_expansions.append(volume_ratio >= self.params.get('vol_multiplier', 1.2))
-        
-        # 计算EMA20斜率
-        ema20_slopes = []
-        for i in range(len(ema_long)):
-            if i < 1:
-                ema20_slopes.append(0)
-                continue
-            
-            current_ema_long = ema_long.iloc[i]
-            prev_ema_long = ema_long.iloc[i-1]
-            slope = (current_ema_long - prev_ema_long) / prev_ema_long if prev_ema_long != 0 else 0
-            ema20_slopes.append(slope)
-        
-        # 计算RSI条件（如果使用）
-        rsi_values = []
-        if self.assist_cond == 'rsi':
-            rsi_period = self.params.get('rsi_period', 9)
-            rsi_values = rsi(closes, rsi_period)
+            volume_expansions.append(volume_ratio >= self.volume_factor)
         
         # 批量计算信号
         for i in range(len(df)):
-            if i < max(self.long_ma, 10):
+            if i < max(self.atr_period, self.consecutive_bars + 1, 21):
                 signals.append(0)
                 details_list.append({})
                 continue
                 
             current_close = closes.iloc[i]
-            current_ema_short = ema_short.iloc[i]
-            prev_ema_short = ema_short.iloc[i-1] if i > 0 else current_ema_short
-            current_ema_long = ema_long.iloc[i]
-            prev_ema_long = ema_long.iloc[i-1] if i > 0 else current_ema_long
+            current_high = highs.iloc[i]
+            current_low = lows.iloc[i]
+            current_volume = volumes.iloc[i]
+            current_typical = typical_prices.iloc[i]
             
-            # 计算信号
+            # 计算ATR条件
+            current_atr = atr_values.iloc[i]
+            atr_mean = atr_values.iloc[i-self.atr_period:i].mean() if i >= self.atr_period else current_atr
+            atr_condition_met = current_atr > atr_mean * self.atr_threshold
+            
+            # 计算成交量条件
+            volume_condition_met = False
+            if self.use_volume and i >= 21:
+                volume_condition_met = volume_expansions[i]
+            
+            # 检查连续突破条件
+            long_breakout = self._check_consecutive_breakout(df, typical_prices, i, self.consecutive_bars, direction='up')
+            short_breakout = self._check_consecutive_breakout(df, typical_prices, i, self.consecutive_bars, direction='down')
+            
+            # 计算技术指标信号（不包含仓位逻辑）
             signal = 0
             
-            # 检查EMA交叉条件
-            ema_cross_up = (float(prev_ema_short) <= float(prev_ema_long) and float(current_ema_short) > float(current_ema_long))
-            ema_cross_down = (float(prev_ema_short) >= float(prev_ema_long) and float(current_ema_short) < float(current_ema_long))
+            # 开多技术条件
+            if long_breakout and atr_condition_met:
+                if not self.use_volume or volume_condition_met:
+                    signal = 1
             
-            # 检查辅助条件
-            assist_condition_met = False
-            if self.assist_cond == 'volume':
-                # 成交量条件
-                if self.mode == 'strict':
-                    # strict模式：要求当前K线放量
-                    assist_condition_met = volume_expansions[i]
-                else:
-                    # loose模式：允许前一根放量
-                    assist_condition_met = volume_expansions[i] or (i > 0 and volume_expansions[i-1])
-            elif self.assist_cond == 'rsi':
-                # RSI条件
-                if i < len(rsi_values):
-                    current_rsi = rsi_values.iloc[i]
-                    rsi_long_entry = self.params.get('rsi_long_entry', 55)
-                    rsi_short_entry = self.params.get('rsi_short_entry', 45)
-                    if ema_cross_up:
-                        assist_condition_met = current_rsi > rsi_long_entry
-                    elif ema_cross_down:
-                        assist_condition_met = current_rsi < rsi_short_entry
-            else:
-                # 无辅助条件
-                assist_condition_met = True
-            
-            # 检查EMA20斜率条件
-            ema20_slope = ema20_slopes[i] if i < len(ema20_slopes) else 0
-            
-            # 生成信号
-            if ema_cross_up and assist_condition_met and ema20_slope > 0:
-                signal = 1
-            elif ema_cross_down and assist_condition_met and ema20_slope < 0:
-                signal = -1
+            # 开空技术条件
+            elif short_breakout and atr_condition_met:
+                if not self.use_volume or volume_condition_met:
+                    signal = -1
             
             # 构建详细信息
             details = {
-                'current_price': current_close,
-                'ema5': current_ema_short,
-                'ema20': current_ema_long,
-                'ema20_slope': ema20_slope,
-                'volume_expansion': volume_expansions[i] if i < len(volume_expansions) else False,
+                'current_price': float(current_close),
+                'current_typical': float(current_typical),
+                'atr': float(current_atr),
+                'atr_mean': float(atr_mean),
+                'atr_condition_met': atr_condition_met,
+                'volume_condition_met': volume_condition_met,
+                'long_breakout': long_breakout,
+                'short_breakout': short_breakout,
+                'current_volume': float(current_volume),
                 'volume_ratio': volume_ratios[i] if i < len(volume_ratios) else 0
             }
-            
-            if self.assist_cond == 'rsi' and i < len(rsi_values):
-                details['rsi'] = rsi_values.iloc[i]
             
             signals.append(signal)
             details_list.append(details)
         
-        return signals, details_list
+        return signals, details_list, typical_prices
     
     def _execute_trade_logic(self, signal: int, price: float, details: dict,
                            position: int, entry_price: float, highest_price: float, 
-                           lowest_price: float, trade_count: int, total_fee: float, close_trades: list):
+                           lowest_price: float, trade_count: int, total_fee: float, close_trades: list,
+                           df: pd.DataFrame, typical_prices: pd.Series, current_idx: int):
         """执行交易逻辑"""
         action = "HOLD"
         exit_price = 0.0
@@ -264,6 +240,13 @@ class BatchFastBacktest:
         
         # 检查移动止损
         trailing_stop_triggered = self._check_trailing_stop(price, position, highest_price, lowest_price)
+        
+        # 检查平仓条件 (连续2根K线反向突破)
+        close_signal = 0
+        if position == 1 and self._check_consecutive_breakout(df, typical_prices, current_idx, 2, direction='down'):
+            close_signal = -1
+        elif position == -1 and self._check_consecutive_breakout(df, typical_prices, current_idx, 2, direction='up'):
+            close_signal = 1
         
         if position == 0:
             if signal == 1:
@@ -294,6 +277,15 @@ class BatchFastBacktest:
                 position = 0
                 highest_price = 0.0
                 trade_count += 1
+            elif close_signal == -1:
+                exit_price = price
+                return_rate = self._calculate_return_rate(entry_price, exit_price, position)
+                action = "LONG_CLOSE_BREAKOUT"
+                trade_fee = price * self.sell_fee_rate
+                total_fee += trade_fee
+                position = 0
+                highest_price = 0.0
+                trade_count += 1
             elif signal == -1:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
@@ -310,6 +302,15 @@ class BatchFastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
                 action = "SHORT_CLOSE_TRAILING_STOP"
+                trade_fee = price * self.buy_fee_rate
+                total_fee += trade_fee
+                position = 0
+                lowest_price = 0.0
+                trade_count += 1
+            elif close_signal == 1:
+                exit_price = price
+                return_rate = self._calculate_return_rate(entry_price, exit_price, position)
+                action = "SHORT_CLOSE_BREAKOUT"
                 trade_fee = price * self.buy_fee_rate
                 total_fee += trade_fee
                 position = 0
@@ -361,6 +362,40 @@ class BatchFastBacktest:
             if price >= stop_price:
                 return True
         return False
+    
+    def _check_consecutive_breakout(self, df: pd.DataFrame, typical_prices: pd.Series, current_idx: int, 
+                                   consecutive_bars: int, direction: str) -> bool:
+        """
+        检查连续突破条件
+        
+        Args:
+            df: K线数据
+            typical_prices: 典型价格序列
+            current_idx: 当前K线索引
+            consecutive_bars: 连续K线数量
+            direction: 突破方向 ('up' 或 'down')
+            
+        Returns:
+            bool: 是否满足连续突破条件
+        """
+        if current_idx < consecutive_bars:
+            return False
+        
+        # 检查最近consecutive_bars根K线是否连续突破
+        for i in range(consecutive_bars):
+            idx = current_idx - i
+            prev_idx = current_idx - i - 1
+            
+            if direction == 'up':
+                # 向上突破: 当前close > 前一根typical price
+                if df['close'].iloc[idx] <= typical_prices.iloc[prev_idx]:
+                    return False
+            else:
+                # 向下突破: 当前close < 前一根typical price
+                if df['close'].iloc[idx] >= typical_prices.iloc[prev_idx]:
+                    return False
+        
+        return True
     
     def _calculate_return_rate(self, entry_price: float, exit_price: float, position: int) -> float:
         """计算考虑手续费后的净收益率"""
@@ -484,23 +519,18 @@ class BatchFastBacktest:
 def print_batch_report(results: list, config: dict):
     """打印批量回测报告"""
     logger.info("\n" + "=" * 80)
-    logger.info("EMA交叉策略批量快速回测报告")
+    logger.info("高频短线策略批量快速回测报告")
     logger.info("=" * 80)
     
     # 打印策略参数
     logger.info("策略参数:")
     logger.info(f"  K线周期: {config.get('bar', '1m')}")
-    logger.info(f"  EMA参数: {config.get('short_ma', 5)}/{config.get('long_ma', 20)}")
-    logger.info(f"  模式: {config.get('mode', 'strict')}")
-    logger.info(f"  移动止损: {config.get('trailing_stop_pct', 1.0)}%")
-    logger.info(f"  辅助条件: {config.get('assist_cond', 'volume')}")
-    logger.info(f"  波动率退出: {'是' if config.get('volatility_exit', False) else '否'}")
-    
-    if config.get('assist_cond') == 'volume':
-        logger.info(f"  成交量倍数: {config.get('params', {}).get('vol_multiplier', 1.2)}")
-        logger.info(f"  确认百分比: {config.get('params', {}).get('confirmation_pct', 0.2)}%")
-    elif config.get('assist_cond') == 'rsi':
-        logger.info(f"  RSI周期: {config.get('params', {}).get('rsi_period', 9)}")
+    logger.info(f"  连续K线: {config.get('consecutive_bars', 2)}")
+    logger.info(f"  ATR周期: {config.get('atr_period', 14)}")
+    logger.info(f"  ATR阈值: {config.get('atr_threshold', 0.8)}")
+    logger.info(f"  移动止损: {config.get('trailing_stop_pct', 0.8)}%")
+    logger.info(f"  成交量倍数: {config.get('volume_factor', 1.2)}")
+    logger.info(f"  使用成交量: {'是' if config.get('use_volume', True) else '否'}")
     
     logger.info("-" * 80)
     logger.info("批量回测结果排行榜 (按收益率排序):")
@@ -543,7 +573,7 @@ def print_batch_report(results: list, config: dict):
 def main():
     """主函数"""
     # 解析命令行参数
-    parser = argparse.ArgumentParser(description='EMA交叉策略批量快速回测系统')
+    parser = argparse.ArgumentParser(description='高频短线策略批量快速回测系统')
     parser.add_argument('--config', type=str, help='配置文件路径', default=None)
     parser.add_argument('--limit', type=int, help='回测数据量', default=300)
     parser.add_argument('--min_vol', type=float, help='最小交易量(USDT)', default=20000000)
@@ -560,14 +590,14 @@ def main():
             default_config = {}
     else:
         # 加载默认配置文件作为用户输入的默认值
-        config_path = os.path.join(os.path.dirname(__file__), 'configs/bnb_usdt_swap.json')
+        config_path = os.path.join(os.path.dirname(__file__), 'configs/btc_usdt_swap.json')
         default_config = load_config_from_file(config_path)
         if not default_config:
             logger.info("未找到默认配置文件，使用系统默认值")
             default_config = {}
     
     # 咨询用户输入
-    logger.info("EMA交叉策略批量快速回测系统")
+    logger.info("高频短线策略批量快速回测系统")
     logger.info("=" * 50)
     logger.info("注意：此系统将自动扫描高交易量币种并批量回测")
     logger.info("=" * 50)
@@ -577,30 +607,26 @@ def main():
     
     # 设置参数
     bar = config.get('bar', '1m')
-    short_ma = config.get('short_ma', 5)
-    long_ma = config.get('long_ma', 20)
-    mode = config.get('mode', 'loose')
-    trailing_stop_pct = config.get('trailing_stop_pct', 1.0)
-    assist_cond = config.get('assist_cond', 'volume')
-    volatility_exit = config.get('volatility_exit', False)
-    volatility_threshold = config.get('volatility_threshold', 0.5)
-    params = config.get('params', {})
+    consecutive_bars = config.get('consecutive_bars', 2)
+    atr_period = config.get('atr_period', 14)
+    atr_threshold = config.get('atr_threshold', 0.8)
+    trailing_stop_pct = config.get('trailing_stop_pct', 0.8)
+    use_volume = config.get('use_volume', True)
+    volume_factor = config.get('volume_factor', 1.2)
     
     # 创建批量回测实例
     batch_backtest = BatchFastBacktest(
         bar=bar,
-        short_ma=short_ma,
-        long_ma=long_ma,
-        mode=mode,
+        consecutive_bars=consecutive_bars,
+        atr_period=atr_period,
+        atr_threshold=atr_threshold,
         trailing_stop_pct=trailing_stop_pct,
-        assist_cond=assist_cond,
-        volatility_exit=volatility_exit,
-        volatility_threshold=volatility_threshold,
-        **params
+        volume_factor=volume_factor,
+        use_volume=use_volume
     )
     
     # 运行批量回测
-    results = batch_backtest.run_batch_backtest(min_vol_ccy=args.min_vol, limit=args.limit, max_workers=args.workers)
+    results = batch_backtest.run_batch_backtest(min_vol_ccy=args.min_vol, limit=args.limit)
     
     if results:
         # 打印批量报告
@@ -636,19 +662,13 @@ def save_batch_results_to_excel(results: list, config: dict, output_dir: str = "
         # Sheet 2: 策略参数
         param_data = {
             '参数': [
-                'K线周期', '短EMA周期', '长EMA周期', '模式', 
-                '移动止损(%)', '辅助条件', '波动率退出', '波动率阈值',
-                '成交量倍数', '确认百分比(%)', 'RSI周期'
+                'K线周期', '连续K线', 'ATR周期', 'ATR阈值', 
+                '移动止损(%)', '成交量倍数', '使用成交量'
             ],
             '数值': [
-                config.get('bar', '1m'), config.get('short_ma', 5), config.get('long_ma', 20),
-                config.get('mode', 'loose'), config.get('trailing_stop_pct', 1.0), 
-                config.get('assist_cond', 'volume'),
-                '是' if config.get('volatility_exit', False) else '否', 
-                f"{config.get('volatility_threshold', 0.5):.2f}",
-                config.get('params', {}).get('vol_multiplier', 'N/A'),
-                config.get('params', {}).get('confirmation_pct', 'N/A'),
-                config.get('params', {}).get('rsi_period', 'N/A')
+                config.get('bar', '1m'), config.get('consecutive_bars', 2), config.get('atr_period', 14),
+                config.get('atr_threshold', 0.8), config.get('trailing_stop_pct', 0.8), 
+                config.get('volume_factor', 1.2), '是' if config.get('use_volume', True) else '否'
             ]
         }
         param_df = pd.DataFrame(param_data)
