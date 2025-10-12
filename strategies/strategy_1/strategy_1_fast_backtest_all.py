@@ -327,12 +327,23 @@ class BatchFastBacktest:
                 highest_price = price
                 trade_count += 1
         
-        # 记录平仓交易
+        # 记录平仓交易（包含详细统计信息）
         if action != "HOLD" and return_rate != 0:
             close_trades.append({
                 'return_rate': return_rate,
                 'exit_price': exit_price,
-                'action': action
+                'action': action,
+                'trade_type': 'LONG' if position == 1 else 'SHORT' if position == -1 else 'NONE',
+                'exit_reason': 'TRAILING_STOP' if trailing_stop_triggered else 'REVERSE_SIGNAL',
+                'entry_price': entry_price,
+                'position_holding_bars': 0,
+                'atr_condition': False,
+                'volume_condition': details.get('volume_expansion', False),
+                'long_breakout': False,
+                'short_breakout': False,
+                'current_price': price,
+                'highest_price': highest_price,
+                'lowest_price': lowest_price
             })
         
         return {

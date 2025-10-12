@@ -34,7 +34,8 @@ class HighFrequencyStrategy:
                                       atr_threshold: float = 0.8,
                                       volume_factor: float = 1.2,
                                       use_volume: bool = True,
-                                      mock_position: int = 0) -> int:
+                                      mock_position: int = 0,
+                                      breakout_stop_bars: int = 2) -> int:
         """
         计算高频策略信号
         
@@ -106,11 +107,11 @@ class HighFrequencyStrategy:
                 if not use_volume or volume_condition_met:
                     return -1
 
-            # 平仓条件 (连续2根K线反向突破)
+            # 平仓条件 (连续breakout_stop_bars根K线反向突破)
             elif mock_position != 0:
-                if mock_position == 1 and self._check_consecutive_breakout(df, typical_prices, 2, direction='down'):
+                if mock_position == 1 and self._check_consecutive_breakout(df, typical_prices, breakout_stop_bars, direction='down'):
                     return 0
-                elif mock_position == -1 and self._check_consecutive_breakout(df, typical_prices, 2, direction='up'):
+                elif mock_position == -1 and self._check_consecutive_breakout(df, typical_prices, breakout_stop_bars, direction='up'):
                     return 0
 
             # 持有信号
@@ -209,7 +210,8 @@ class HighFrequencyStrategy:
                            atr_threshold: float = 0.8,
                            volume_factor: float = 1.2,
                            use_volume: bool = True,
-                           mock_position: int = 0) -> dict:
+                           mock_position: int = 0,
+                           breakout_stop_bars: int = 2) -> dict:
         """
         获取策略详细信息，用于调试和分析
         
@@ -269,7 +271,7 @@ class HighFrequencyStrategy:
 
             # 计算信号
             signal = self.calculate_high_frequency_signal(symbol, bar, consecutive_bars, atr_period, 
-                                                         atr_threshold, volume_factor, use_volume, mock_position)
+                                                         atr_threshold, volume_factor, use_volume, mock_position, breakout_stop_bars)
 
             return {
                 'symbol': symbol,
@@ -283,6 +285,7 @@ class HighFrequencyStrategy:
                 'long_breakout': long_breakout,
                 'short_breakout': short_breakout,
                 'consecutive_bars': consecutive_bars,
+                'breakout_stop_bars': breakout_stop_bars,
                 'current_volume': float(current_volume),
                 'avg_volume': float(avg_volume),
                 'signal': signal

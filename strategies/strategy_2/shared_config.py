@@ -43,6 +43,7 @@ def get_user_input(default_config: dict = None) -> dict:
     default_leverage = default_config.get('leverage', 3)
     default_use_volume = default_config.get('use_volume', True)
     default_volume_factor = default_config.get('volume_factor', 1.2)
+    default_breakout_stop_bars = default_config.get('breakout_stop_bars', 2)
     default_params = default_config.get('params', {})
 
     try:
@@ -60,6 +61,9 @@ def get_user_input(default_config: dict = None) -> dict:
         
         trailing_stop_input = input(f"请输入移动止损百分比 (默认 {default_trailing_stop_pct}%): ").strip()
         trailing_stop_pct = float(trailing_stop_input) if trailing_stop_input else default_trailing_stop_pct
+
+        breakout_stop_input = input(f"请输入突破止损K线数量 (默认 {default_breakout_stop_bars}): ").strip()
+        breakout_stop_bars = int(breakout_stop_input) if breakout_stop_input else default_breakout_stop_bars
 
         trade_input = input(f"是否真实交易 (y/n, 默认 {'y' if default_trade else 'n'}): ").strip().lower()
         if trade_input:
@@ -111,6 +115,7 @@ def get_user_input(default_config: dict = None) -> dict:
         atr_period = default_atr_period
         atr_threshold = default_atr_threshold
         trailing_stop_pct = default_trailing_stop_pct
+        breakout_stop_bars = default_breakout_stop_bars
         trade = default_trade
         use_volume = default_use_volume
         volume_factor = default_volume_factor
@@ -125,6 +130,7 @@ def get_user_input(default_config: dict = None) -> dict:
         'atr_period': atr_period,
         'atr_threshold': atr_threshold,
         'trailing_stop_pct': trailing_stop_pct,
+        'breakout_stop_bars': breakout_stop_bars,
         'trade': trade,
         'trade_amount': trade_amount,
         'trade_mode': trade_mode,
@@ -146,6 +152,7 @@ def print_final_config(config: dict):
     atr_period = config.get('atr_period', 14)
     atr_threshold = config.get('atr_threshold', 0.8)
     trailing_stop_pct = config.get('trailing_stop_pct', 0.8)
+    breakout_stop_bars = config.get('breakout_stop_bars', 2)
     trade = config.get('trade', False)
     trade_amount = config.get('trade_amount', 10.0)
     trade_mode = config.get('trade_mode', 3)
@@ -161,6 +168,7 @@ def print_final_config(config: dict):
     logger.info(f"  ATR周期: {atr_period}")
     logger.info(f"  ATR阈值: {atr_threshold}")
     logger.info(f"  移动止损: {trailing_stop_pct}%")
+    logger.info(f"  突破止损K线: {breakout_stop_bars}")
     logger.info(f"  真实交易: {'是' if trade else '否'}")
     logger.info(f"  使用成交量: {'是' if use_volume else '否'}")
     if use_volume:

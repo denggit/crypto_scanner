@@ -34,6 +34,7 @@ class BatchFastBacktest:
                  consecutive_bars: int = 2, atr_period: int = 14,
                  atr_threshold: float = 0.8, trailing_stop_pct: float = 0.8,
                  volume_factor: float = 1.2, use_volume: bool = True,
+                 breakout_stop_bars: int = 2,
                  buy_fee_rate: float = 0.0005, sell_fee_rate: float = 0.0005):
         """
         Initialize Batch Fast Backtest
@@ -46,6 +47,7 @@ class BatchFastBacktest:
             trailing_stop_pct: Trailing stop percentage
             volume_factor: Volume expansion factor
             use_volume: Whether to use volume condition
+            breakout_stop_bars: Number of consecutive bars for breakout stop
         """
         self.bar = bar
         self.consecutive_bars = consecutive_bars
@@ -54,6 +56,7 @@ class BatchFastBacktest:
         self.trailing_stop_pct = trailing_stop_pct
         self.volume_factor = volume_factor
         self.use_volume = use_volume
+        self.breakout_stop_bars = breakout_stop_bars
         
         # 手续费参数
         self.buy_fee_rate = buy_fee_rate  # 买入手续费率 0.05%
@@ -237,15 +240,17 @@ class BatchFastBacktest:
         exit_price = 0.0
         return_rate = 0.0
         trade_fee = 0.0
+        trade_type = ""
+        exit_reason = ""
         
         # 检查移动止损
         trailing_stop_triggered = self._check_trailing_stop(price, position, highest_price, lowest_price)
         
-        # 检查平仓条件 (连续2根K线反向突破)
+        # 检查平仓条件 (连续breakout_stop_bars根K线反向突破)
         close_signal = 0
-        if position == 1 and self._check_consecutive_breakout(df, typical_prices, current_idx, 2, direction='down'):
+        if position == 1 and self._check_consecutive_breakout(df, typical_prices, current_idx, self.breakout_stop_bars, direction='down'):
             close_signal = -1
-        elif position == -1 and self._check_consecutive_breakout(df, typical_prices, current_idx, 2, direction='up'):
+        elif position == -1 and self._check_consecutive_breakout(df, typical_prices, current_idx, self.breakout_stop_bars, direction='up'):
             close_signal = 1
         
         if position == 0:
@@ -255,6 +260,7 @@ class BatchFastBacktest:
                 highest_price = price
                 lowest_price = price
                 action = "LONG_OPEN"
+                trade_type = "LONG"
                 trade_fee = price * self.buy_fee_rate
                 total_fee += trade_fee
                 trade_count += 1
@@ -264,6 +270,7 @@ class BatchFastBacktest:
                 lowest_price = price
                 highest_price = price
                 action = "SHORT_OPEN"
+                trade_type = "SHORT"
                 trade_fee = price * self.sell_fee_rate
                 total_fee += trade_fee
                 trade_count += 1
@@ -272,6 +279,8 @@ class BatchFastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
                 action = "LONG_CLOSE_TRAILING_STOP"
+                exit_reason = "TRAILING_STOP"
+                trade_type = "LONG"
                 trade_fee = price * self.sell_fee_rate
                 total_fee += trade_fee
                 position = 0
@@ -281,6 +290,8 @@ class BatchFastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
                 action = "LONG_CLOSE_BREAKOUT"
+                exit_reason = "BREAKOUT"
+                trade_type = "LONG"
                 trade_fee = price * self.sell_fee_rate
                 total_fee += trade_fee
                 position = 0
@@ -290,6 +301,8 @@ class BatchFastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
                 action = "LONG_CLOSE_SHORT_OPEN"
+                exit_reason = "REVERSE_SIGNAL"
+                trade_type = "LONG"
                 trade_fee = price * self.sell_fee_rate
                 total_fee += trade_fee
                 position = -1
@@ -302,6 +315,8 @@ class BatchFastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
                 action = "SHORT_CLOSE_TRAILING_STOP"
+                exit_reason = "TRAILING_STOP"
+                trade_type = "SHORT"
                 trade_fee = price * self.buy_fee_rate
                 total_fee += trade_fee
                 position = 0
@@ -311,6 +326,8 @@ class BatchFastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
                 action = "SHORT_CLOSE_BREAKOUT"
+                exit_reason = "BREAKOUT"
+                trade_type = "SHORT"
                 trade_fee = price * self.buy_fee_rate
                 total_fee += trade_fee
                 position = 0
@@ -320,6 +337,8 @@ class BatchFastBacktest:
                 exit_price = price
                 return_rate = self._calculate_return_rate(entry_price, exit_price, position)
                 action = "SHORT_CLOSE_LONG_OPEN"
+                exit_reason = "REVERSE_SIGNAL"
+                trade_type = "SHORT"
                 trade_fee = price * self.buy_fee_rate
                 total_fee += trade_fee
                 position = 1
@@ -328,13 +347,38 @@ class BatchFastBacktest:
                 highest_price = price
                 trade_count += 1
         
-        # 记录平仓交易
+        # 记录平仓交易（包含详细统计信息）
         if action != "HOLD" and return_rate != 0:
+            # 计算持仓时间，确保不会出现负数
+            holding_bars = 0
+            if hasattr(self, '_last_entry_idx'):
+                holding_bars = max(0, current_idx - self._last_entry_idx)
+            
             close_trades.append({
                 'return_rate': return_rate,
                 'exit_price': exit_price,
-                'action': action
+                'action': action,
+                'trade_type': trade_type,
+                'exit_reason': exit_reason,
+                'entry_price': entry_price,
+                'position_holding_bars': holding_bars,
+                'atr_condition': details.get('atr_condition_met', False),
+                'volume_condition': details.get('volume_condition_met', False),
+                'long_breakout': details.get('long_breakout', False),
+                'short_breakout': details.get('short_breakout', False),
+                'current_price': price,
+                'highest_price': highest_price,
+                'lowest_price': lowest_price
             })
+            
+            # 平仓后重置开仓索引
+            if action.endswith("_CLOSE"):
+                if hasattr(self, '_last_entry_idx'):
+                    delattr(self, '_last_entry_idx')
+            
+        # 记录开仓索引
+        if action in ["LONG_OPEN", "SHORT_OPEN"]:
+            self._last_entry_idx = current_idx
         
         return {
             'position': position,
@@ -440,6 +484,175 @@ class BatchFastBacktest:
         else:
             max_drawdown = 0
         
+        # 详细统计信息
+        detailed_stats = {
+            # 交易类型统计
+            'long_trades_count': 0,
+            'short_trades_count': 0,
+            'long_win_rate': 0,
+            'short_win_rate': 0,
+            'long_avg_return': 0,
+            'short_avg_return': 0,
+            
+            # 止损原因统计
+            'trailing_stop_count': 0,
+            'breakout_stop_count': 0,
+            'reverse_signal_count': 0,
+            'trailing_stop_win_rate': 0,
+            'breakout_stop_win_rate': 0,
+            'reverse_signal_win_rate': 0,
+            
+            # 止损占比分析
+            'trailing_stop_ratio': 0,
+            'breakout_stop_ratio': 0,
+            'reverse_signal_ratio': 0,
+            
+            # 亏损原因分析
+            'loss_trailing_stop_ratio': 0,
+            'loss_breakout_ratio': 0,
+            'loss_reverse_signal_ratio': 0,
+            
+            # 止损收益贡献分析
+            'trailing_stop_return_pct': 0,
+            'breakout_stop_return_pct': 0,
+            'reverse_signal_return_pct': 0,
+            'trailing_stop_return_ratio': 0,
+            'breakout_stop_return_ratio': 0,
+            'reverse_signal_return_ratio': 0,
+            
+            # 条件统计
+            'atr_condition_count': 0,
+            'volume_condition_count': 0,
+            'atr_condition_win_rate': 0,
+            'volume_condition_win_rate': 0,
+            
+            # 持仓时间统计
+            'avg_holding_bars': 0,
+            'max_holding_bars': 0,
+            'min_holding_bars': 0,
+            
+            # 亏损分析
+            'avg_loss_amount': 0,
+            'max_loss_amount': 0,
+            'loss_trades_count': 0,
+            'profit_trades_count': 0
+        }
+        
+        if len(close_trades_df) > 0:
+            # 交易类型统计
+            long_trades = close_trades_df[close_trades_df['trade_type'] == 'LONG']
+            short_trades = close_trades_df[close_trades_df['trade_type'] == 'SHORT']
+            
+            # 止损原因统计
+            trailing_stop_trades = close_trades_df[close_trades_df['exit_reason'] == 'TRAILING_STOP']
+            breakout_trades = close_trades_df[close_trades_df['exit_reason'] == 'BREAKOUT']
+            reverse_signal_trades = close_trades_df[close_trades_df['exit_reason'] == 'REVERSE_SIGNAL']
+            
+            # 条件统计
+            atr_condition_trades = close_trades_df[close_trades_df['atr_condition'] == True]
+            volume_condition_trades = close_trades_df[close_trades_df['volume_condition'] == True]
+            
+            # 计算止损占比
+            total_stop_trades = len(trailing_stop_trades) + len(breakout_trades) + len(reverse_signal_trades)
+            trailing_stop_ratio = len(trailing_stop_trades) / total_stop_trades * 100 if total_stop_trades > 0 else 0
+            breakout_stop_ratio = len(breakout_trades) / total_stop_trades * 100 if total_stop_trades > 0 else 0
+            reverse_signal_ratio = len(reverse_signal_trades) / total_stop_trades * 100 if total_stop_trades > 0 else 0
+            
+            # 计算亏损原因分析
+            loss_by_trailing_stop = len(trailing_stop_trades[trailing_stop_trades['return_rate'] < 0]) if len(trailing_stop_trades) > 0 else 0
+            loss_by_breakout = len(breakout_trades[breakout_trades['return_rate'] < 0]) if len(breakout_trades) > 0 else 0
+            loss_by_reverse_signal = len(reverse_signal_trades[reverse_signal_trades['return_rate'] < 0]) if len(reverse_signal_trades) > 0 else 0
+            
+            total_loss_trades = loss_by_trailing_stop + loss_by_breakout + loss_by_reverse_signal
+            loss_trailing_stop_ratio = loss_by_trailing_stop / total_loss_trades * 100 if total_loss_trades > 0 else 0
+            loss_breakout_ratio = loss_by_breakout / total_loss_trades * 100 if total_loss_trades > 0 else 0
+            loss_reverse_signal_ratio = loss_by_reverse_signal / total_loss_trades * 100 if total_loss_trades > 0 else 0
+            
+            # 计算止损收益贡献分析
+            trailing_stop_return = trailing_stop_trades['return_rate'].sum() * 100 if len(trailing_stop_trades) > 0 else 0
+            breakout_stop_return = breakout_trades['return_rate'].sum() * 100 if len(breakout_trades) > 0 else 0
+            reverse_signal_return = reverse_signal_trades['return_rate'].sum() * 100 if len(reverse_signal_trades) > 0 else 0
+            
+            # 计算止损收益占比
+            total_stop_return = trailing_stop_return + breakout_stop_return + reverse_signal_return
+            trailing_stop_return_ratio = trailing_stop_return / total_stop_return * 100 if total_stop_return != 0 else 0
+            breakout_stop_return_ratio = breakout_stop_return / total_stop_return * 100 if total_stop_return != 0 else 0
+            reverse_signal_return_ratio = reverse_signal_return / total_stop_return * 100 if total_stop_return != 0 else 0
+            
+            # 计算各种止损方式的平均收益率
+            trailing_stop_avg_return = trailing_stop_trades['return_rate'].mean() * 100 if len(trailing_stop_trades) > 0 else 0
+            breakout_stop_avg_return = breakout_trades['return_rate'].mean() * 100 if len(breakout_trades) > 0 else 0
+            reverse_signal_avg_return = reverse_signal_trades['return_rate'].mean() * 100 if len(reverse_signal_trades) > 0 else 0
+            
+            # 计算各种止损导致最终收益的百分比
+            total_final_return = close_trades_df['return_rate'].sum() * 100 if len(close_trades_df) > 0 else 0
+            trailing_stop_final_return_pct = trailing_stop_return / total_final_return * 100 if total_final_return != 0 else 0
+            breakout_stop_final_return_pct = breakout_stop_return / total_final_return * 100 if total_final_return != 0 else 0
+            reverse_signal_final_return_pct = reverse_signal_return / total_final_return * 100 if total_final_return != 0 else 0
+            
+            detailed_stats = {
+                # 交易类型统计
+                'long_trades_count': len(long_trades),
+                'short_trades_count': len(short_trades),
+                'long_win_rate': len(long_trades[long_trades['return_rate'] > 0]) / len(long_trades) * 100 if len(long_trades) > 0 else 0,
+                'short_win_rate': len(short_trades[short_trades['return_rate'] > 0]) / len(short_trades) * 100 if len(short_trades) > 0 else 0,
+                'long_avg_return': long_trades['return_rate'].mean() * 100 if len(long_trades) > 0 else 0,
+                'short_avg_return': short_trades['return_rate'].mean() * 100 if len(short_trades) > 0 else 0,
+                
+                # 止损原因统计
+                'trailing_stop_count': len(trailing_stop_trades),
+                'breakout_stop_count': len(breakout_trades),
+                'reverse_signal_count': len(reverse_signal_trades),
+                'trailing_stop_win_rate': len(trailing_stop_trades[trailing_stop_trades['return_rate'] > 0]) / len(trailing_stop_trades) * 100 if len(trailing_stop_trades) > 0 else 0,
+                'breakout_stop_win_rate': len(breakout_trades[breakout_trades['return_rate'] > 0]) / len(breakout_trades) * 100 if len(breakout_trades) > 0 else 0,
+                'reverse_signal_win_rate': len(reverse_signal_trades[reverse_signal_trades['return_rate'] > 0]) / len(reverse_signal_trades) * 100 if len(reverse_signal_trades) > 0 else 0,
+                
+                # 止损占比分析
+                'trailing_stop_ratio': trailing_stop_ratio,
+                'breakout_stop_ratio': breakout_stop_ratio,
+                'reverse_signal_ratio': reverse_signal_ratio,
+                
+                # 亏损原因分析
+                'loss_trailing_stop_ratio': loss_trailing_stop_ratio,
+                'loss_breakout_ratio': loss_breakout_ratio,
+                'loss_reverse_signal_ratio': loss_reverse_signal_ratio,
+                
+                # 止损收益贡献分析
+                'trailing_stop_return_pct': trailing_stop_return,
+                'breakout_stop_return_pct': breakout_stop_return,
+                'reverse_signal_return_pct': reverse_signal_return,
+                'trailing_stop_return_ratio': trailing_stop_return_ratio,
+                'breakout_stop_return_ratio': breakout_stop_return_ratio,
+                'reverse_signal_return_ratio': reverse_signal_return_ratio,
+                
+                # 各种止损方式的平均收益率
+                'trailing_stop_avg_return': trailing_stop_avg_return,
+                'breakout_stop_avg_return': breakout_stop_avg_return,
+                'reverse_signal_avg_return': reverse_signal_avg_return,
+                
+                # 各种止损导致最终收益的百分比
+                'trailing_stop_final_return_pct': trailing_stop_final_return_pct,
+                'breakout_stop_final_return_pct': breakout_stop_final_return_pct,
+                'reverse_signal_final_return_pct': reverse_signal_final_return_pct,
+                
+                # 条件统计
+                'atr_condition_count': len(atr_condition_trades),
+                'volume_condition_count': len(volume_condition_trades),
+                'atr_condition_win_rate': len(atr_condition_trades[atr_condition_trades['return_rate'] > 0]) / len(atr_condition_trades) * 100 if len(atr_condition_trades) > 0 else 0,
+                'volume_condition_win_rate': len(volume_condition_trades[volume_condition_trades['return_rate'] > 0]) / len(volume_condition_trades) * 100 if len(volume_condition_trades) > 0 else 0,
+                
+                # 持仓时间统计
+                'avg_holding_bars': close_trades_df['position_holding_bars'].mean() if len(close_trades_df) > 0 else 0,
+                'max_holding_bars': close_trades_df['position_holding_bars'].max() if len(close_trades_df) > 0 else 0,
+                'min_holding_bars': close_trades_df['position_holding_bars'].min() if len(close_trades_df) > 0 else 0,
+                
+                # 亏损分析
+                'avg_loss_amount': loss_trades['return_rate'].mean() * 100 if len(loss_trades) > 0 else 0,
+                'max_loss_amount': loss_trades['return_rate'].min() * 100 if len(loss_trades) > 0 else 0,
+                'loss_trades_count': len(loss_trades),
+                'profit_trades_count': len(win_trades)
+            }
+        
         report = {
             'symbol': symbol,
             'total_trades': trade_count,
@@ -450,7 +663,8 @@ class BatchFastBacktest:
             'profit_factor': profit_factor,
             'sharpe_ratio': sharpe_ratio,
             'max_drawdown_pct': max_drawdown,
-            'close_trades_count': len(close_trades_df)
+            'close_trades_count': len(close_trades_df),
+            **detailed_stats
         }
         
         return report
@@ -531,6 +745,7 @@ def print_batch_report(results: list, config: dict):
     logger.info(f"  移动止损: {config.get('trailing_stop_pct', 0.8)}%")
     logger.info(f"  成交量倍数: {config.get('volume_factor', 1.2)}")
     logger.info(f"  使用成交量: {'是' if config.get('use_volume', True) else '否'}")
+    logger.info(f"  突破止损K线: {config.get('breakout_stop_bars', 2)}")
     
     logger.info("-" * 80)
     logger.info("批量回测结果排行榜 (按收益率排序):")
@@ -566,6 +781,194 @@ def print_batch_report(results: list, config: dict):
     logger.info(f"  最低收益率: {min([r['total_return_pct'] for r in results]):.2f}%")
     logger.info(f"  正收益币种数: {len([r for r in results if r['total_return_pct'] > 0])}")
     logger.info(f"  负收益币种数: {len([r for r in results if r['total_return_pct'] < 0])}")
+    
+    # 详细性能分析
+    logger.info("-" * 80)
+    logger.info("详细性能分析:")
+    
+    # 计算详细统计
+    valid_results = [r for r in results if r.get('close_trades_count', 0) > 0]
+    if valid_results:
+        # 交易类型统计
+        avg_long_trades = np.mean([r.get('long_trades_count', 0) for r in valid_results])
+        avg_short_trades = np.mean([r.get('short_trades_count', 0) for r in valid_results])
+        avg_long_win_rate = np.mean([r.get('long_win_rate', 0) for r in valid_results])
+        avg_short_win_rate = np.mean([r.get('short_win_rate', 0) for r in valid_results])
+        avg_long_return = np.mean([r.get('long_avg_return', 0) for r in valid_results])
+        avg_short_return = np.mean([r.get('short_avg_return', 0) for r in valid_results])
+        
+        # 止损原因统计
+        avg_trailing_stop_count = np.mean([r.get('trailing_stop_count', 0) for r in valid_results])
+        avg_breakout_stop_count = np.mean([r.get('breakout_stop_count', 0) for r in valid_results])
+        avg_reverse_signal_count = np.mean([r.get('reverse_signal_count', 0) for r in valid_results])
+        avg_trailing_stop_ratio = np.mean([r.get('trailing_stop_ratio', 0) for r in valid_results])
+        avg_breakout_stop_ratio = np.mean([r.get('breakout_stop_ratio', 0) for r in valid_results])
+        avg_reverse_signal_ratio = np.mean([r.get('reverse_signal_ratio', 0) for r in valid_results])
+        
+        # 止损胜率统计
+        avg_trailing_stop_win_rate = np.mean([r.get('trailing_stop_win_rate', 0) for r in valid_results])
+        avg_breakout_stop_win_rate = np.mean([r.get('breakout_stop_win_rate', 0) for r in valid_results])
+        avg_reverse_signal_win_rate = np.mean([r.get('reverse_signal_win_rate', 0) for r in valid_results])
+        
+        # 亏损原因分析
+        avg_loss_trailing_stop_ratio = np.mean([r.get('loss_trailing_stop_ratio', 0) for r in valid_results])
+        avg_loss_breakout_ratio = np.mean([r.get('loss_breakout_ratio', 0) for r in valid_results])
+        avg_loss_reverse_signal_ratio = np.mean([r.get('loss_reverse_signal_ratio', 0) for r in valid_results])
+        
+        # 条件统计
+        avg_atr_condition_count = np.mean([r.get('atr_condition_count', 0) for r in valid_results])
+        avg_volume_condition_count = np.mean([r.get('volume_condition_count', 0) for r in valid_results])
+        avg_atr_condition_win_rate = np.mean([r.get('atr_condition_win_rate', 0) for r in valid_results])
+        avg_volume_condition_win_rate = np.mean([r.get('volume_condition_win_rate', 0) for r in valid_results])
+        
+        # 持仓时间统计
+        avg_holding_bars = np.mean([r.get('avg_holding_bars', 0) for r in valid_results])
+        max_holding_bars = np.max([r.get('max_holding_bars', 0) for r in valid_results])
+        min_holding_bars = np.min([r.get('min_holding_bars', 0) for r in valid_results])
+        
+        # 亏损分析
+        avg_loss_amount = np.mean([r.get('avg_loss_amount', 0) for r in valid_results])
+        max_loss_amount = np.max([r.get('max_loss_amount', 0) for r in valid_results])
+        avg_loss_trades_count = np.mean([r.get('loss_trades_count', 0) for r in valid_results])
+        avg_profit_trades_count = np.mean([r.get('profit_trades_count', 0) for r in valid_results])
+        
+        # 止损收益贡献分析
+        avg_trailing_stop_return_pct = np.mean([r.get('trailing_stop_return_pct', 0) for r in valid_results])
+        avg_breakout_stop_return_pct = np.mean([r.get('breakout_stop_return_pct', 0) for r in valid_results])
+        avg_reverse_signal_return_pct = np.mean([r.get('reverse_signal_return_pct', 0) for r in valid_results])
+        avg_trailing_stop_return_ratio = np.mean([r.get('trailing_stop_return_ratio', 0) for r in valid_results])
+        avg_breakout_stop_return_ratio = np.mean([r.get('breakout_stop_return_ratio', 0) for r in valid_results])
+        avg_reverse_signal_return_ratio = np.mean([r.get('reverse_signal_return_ratio', 0) for r in valid_results])
+        
+        # 各种止损导致最终收益的百分比
+        avg_trailing_stop_final_return_pct = np.mean([r.get('trailing_stop_final_return_pct', 0) for r in valid_results])
+        avg_breakout_stop_final_return_pct = np.mean([r.get('breakout_stop_final_return_pct', 0) for r in valid_results])
+        avg_reverse_signal_final_return_pct = np.mean([r.get('reverse_signal_final_return_pct', 0) for r in valid_results])
+        
+        # 各种止损方式的平均收益率
+        avg_trailing_stop_avg_return = np.mean([r.get('trailing_stop_avg_return', 0) for r in valid_results])
+        avg_breakout_stop_avg_return = np.mean([r.get('breakout_stop_avg_return', 0) for r in valid_results])
+        avg_reverse_signal_avg_return = np.mean([r.get('reverse_signal_avg_return', 0) for r in valid_results])
+        
+        logger.info(f"  平均多仓交易数: {avg_long_trades:.1f}")
+        logger.info(f"  平均空仓交易数: {avg_short_trades:.1f}")
+        logger.info(f"  平均多仓胜率: {avg_long_win_rate:.1f}%")
+        logger.info(f"  平均空仓胜率: {avg_short_win_rate:.1f}%")
+        logger.info(f"  平均多仓收益率: {avg_long_return:.2f}%")
+        logger.info(f"  平均空仓收益率: {avg_short_return:.2f}%")
+        logger.info(f"  平均持仓时间: {avg_holding_bars:.1f} 根K线")
+        logger.info(f"  最长持仓时间: {max_holding_bars:.1f} 根K线")
+        logger.info(f"  最短持仓时间: {min_holding_bars:.1f} 根K线")
+        
+        logger.info("-" * 80)
+        logger.info("止损原因分析:")
+        logger.info(f"  移动止损次数: {avg_trailing_stop_count:.1f} ({avg_trailing_stop_ratio:.1f}%)")
+        logger.info(f"  突破止损次数: {avg_breakout_stop_count:.1f} ({avg_breakout_stop_ratio:.1f}%)")
+        logger.info(f"  反向信号止损: {avg_reverse_signal_count:.1f} ({avg_reverse_signal_ratio:.1f}%)")
+        logger.info(f"  移动止损胜率: {avg_trailing_stop_win_rate:.1f}%")
+        logger.info(f"  突破止损胜率: {avg_breakout_stop_win_rate:.1f}%")
+        logger.info(f"  反向信号胜率: {avg_reverse_signal_win_rate:.1f}%")
+        
+        logger.info("-" * 80)
+        logger.info("亏损原因分析:")
+        logger.info(f"  移动止损导致亏损: {avg_loss_trailing_stop_ratio:.1f}%")
+        logger.info(f"  突破止损导致亏损: {avg_loss_breakout_ratio:.1f}%")
+        logger.info(f"  反向信号导致亏损: {avg_loss_reverse_signal_ratio:.1f}%")
+        logger.info(f"  平均亏损金额: {avg_loss_amount:.2f}%")
+        logger.info(f"  最大亏损金额: {max_loss_amount:.2f}%")
+        logger.info(f"  平均亏损交易数: {avg_loss_trades_count:.1f}")
+        logger.info(f"  平均盈利交易数: {avg_profit_trades_count:.1f}")
+        
+        logger.info("-" * 80)
+        logger.info("条件有效性分析:")
+        logger.info(f"  ATR条件触发次数: {avg_atr_condition_count:.1f}")
+        logger.info(f"  成交量条件触发次数: {avg_volume_condition_count:.1f}")
+        logger.info(f"  ATR条件胜率: {avg_atr_condition_win_rate:.1f}%")
+        logger.info(f"  成交量条件胜率: {avg_volume_condition_win_rate:.1f}%")
+        
+        logger.info("-" * 80)
+        logger.info("止损收益贡献分析:")
+        logger.info(f"  移动止损贡献收益: {avg_trailing_stop_return_pct:.2f}% ({avg_trailing_stop_return_ratio:.1f}%)")
+        logger.info(f"  突破止损贡献收益: {avg_breakout_stop_return_pct:.2f}% ({avg_breakout_stop_return_ratio:.1f}%)")
+        logger.info(f"  反向信号贡献收益: {avg_reverse_signal_return_pct:.2f}% ({avg_reverse_signal_return_ratio:.1f}%)")
+        
+        logger.info("-" * 80)
+        logger.info("各种止损方式的平均收益率:")
+        logger.info(f"  移动止损平均收益率: {avg_trailing_stop_avg_return:.2f}%")
+        logger.info(f"  突破止损平均收益率: {avg_breakout_stop_avg_return:.2f}%")
+        logger.info(f"  反向信号平均收益率: {avg_reverse_signal_avg_return:.2f}%")
+    
+    # 优化建议
+    logger.info("-" * 80)
+    logger.info("优化建议:")
+    
+    if valid_results:
+        # 基于统计数据的优化建议
+        avg_total_return = np.mean([r['total_return_pct'] for r in valid_results])
+        avg_win_rate = np.mean([r['win_rate_pct'] for r in valid_results])
+        avg_max_drawdown = np.mean([r['max_drawdown_pct'] for r in valid_results])
+        
+        if avg_total_return < 0:
+            logger.info("  ⚠️  策略整体亏损，建议:")
+            logger.info("     - 检查连续K线数量是否合适")
+            logger.info("     - 调整ATR阈值过滤条件")
+            logger.info("     - 考虑增加移动止损比例")
+        elif avg_win_rate < 50:
+            logger.info("  ⚠️  胜率较低但可能盈利，建议:")
+            logger.info("     - 关注盈亏比而非胜率")
+            logger.info("     - 检查止损设置是否过于严格")
+        elif avg_max_drawdown < -10:
+            logger.info("  ⚠️  回撤较大，建议:")
+            logger.info("     - 增加移动止损比例")
+            logger.info("     - 减少连续K线数量以降低风险")
+        else:
+            logger.info("  ✅  策略表现良好，可以:")
+            logger.info("     - 考虑实盘测试")
+            logger.info("     - 进一步优化参数提升收益")
+        
+        # 基于止损分析的优化建议
+        if avg_trailing_stop_count > avg_breakout_stop_count:
+            logger.info("  📊  移动止损触发较多，建议:")
+            logger.info("     - 适当降低移动止损比例")
+            logger.info("     - 检查是否持仓时间过短")
+        elif avg_breakout_stop_count > avg_trailing_stop_count:
+            logger.info("  📊  突破止损触发较多，建议:")
+            logger.info("     - 增加连续K线数量以提高信号质量")
+            logger.info("     - 检查ATR阈值是否合适")
+        
+        # 基于交易方向的优化建议
+        if avg_long_return > avg_short_return:
+            logger.info("  📈  多仓表现优于空仓，建议:")
+            logger.info("     - 考虑增加多仓权重")
+            logger.info("     - 优化空仓入场条件")
+        elif avg_short_return > avg_long_return:
+            logger.info("  📉  空仓表现优于多仓，建议:")
+            logger.info("     - 考虑增加空仓权重")
+            logger.info("     - 优化多仓入场条件")
+        
+        # 基于条件有效性的优化建议
+        if avg_atr_condition_win_rate > avg_volume_condition_win_rate:
+            logger.info("  🔍  ATR条件有效性更高，建议:")
+            logger.info("     - 保持或加强ATR过滤")
+            logger.info("     - 考虑优化成交量条件参数")
+        elif avg_volume_condition_win_rate > avg_atr_condition_win_rate:
+            logger.info("  🔍  成交量条件有效性更高，建议:")
+            logger.info("     - 保持或加强成交量过滤")
+            logger.info("     - 考虑优化ATR条件参数")
+        
+        # 基于亏损原因的优化建议
+        if avg_loss_trailing_stop_ratio > 50:
+            logger.info("  💔  移动止损是主要亏损来源，建议:")
+            logger.info("     - 降低移动止损比例")
+            logger.info("     - 增加持仓时间")
+        elif avg_loss_breakout_ratio > 50:
+            logger.info("  💔  突破止损是主要亏损来源，建议:")
+            logger.info("     - 增加连续K线数量")
+            logger.info("     - 调整ATR阈值")
+        elif avg_loss_reverse_signal_ratio > 50:
+            logger.info("  💔  反向信号是主要亏损来源，建议:")
+            logger.info("     - 减少反向开仓频率")
+            logger.info("     - 增加信号确认条件")
     
     logger.info("=" * 80 + "\n")
 
@@ -613,6 +1016,7 @@ def main():
     trailing_stop_pct = config.get('trailing_stop_pct', 0.8)
     use_volume = config.get('use_volume', True)
     volume_factor = config.get('volume_factor', 1.2)
+    breakout_stop_bars = config.get('breakout_stop_bars', 2)
     
     # 创建批量回测实例
     batch_backtest = BatchFastBacktest(
@@ -622,7 +1026,8 @@ def main():
         atr_threshold=atr_threshold,
         trailing_stop_pct=trailing_stop_pct,
         volume_factor=volume_factor,
-        use_volume=use_volume
+        use_volume=use_volume,
+        breakout_stop_bars=breakout_stop_bars
     )
     
     # 运行批量回测
@@ -663,12 +1068,13 @@ def save_batch_results_to_excel(results: list, config: dict, output_dir: str = "
         param_data = {
             '参数': [
                 'K线周期', '连续K线', 'ATR周期', 'ATR阈值', 
-                '移动止损(%)', '成交量倍数', '使用成交量'
+                '移动止损(%)', '成交量倍数', '使用成交量', '突破止损K线'
             ],
             '数值': [
                 config.get('bar', '1m'), config.get('consecutive_bars', 2), config.get('atr_period', 14),
                 config.get('atr_threshold', 0.8), config.get('trailing_stop_pct', 0.8), 
-                config.get('volume_factor', 1.2), '是' if config.get('use_volume', True) else '否'
+                config.get('volume_factor', 1.2), '是' if config.get('use_volume', True) else '否',
+                config.get('breakout_stop_bars', 2)
             ]
         }
         param_df = pd.DataFrame(param_data)
@@ -676,25 +1082,91 @@ def save_batch_results_to_excel(results: list, config: dict, output_dir: str = "
         
         # Sheet 3: 统计信息
         if len(results) > 0:
-            stats_data = {
-                '统计指标': [
-                    '总测试币种数', '平均收益率(%)', '最高收益率(%)', '最低收益率(%)',
-                    '正收益币种数', '负收益币种数', '平均胜率(%)', '平均盈亏比',
-                    '平均夏普比率', '平均最大回撤(%)'
-                ],
-                '数值': [
-                    len(results),
-                    np.mean([r['total_return_pct'] for r in results]),
-                    max([r['total_return_pct'] for r in results]),
-                    min([r['total_return_pct'] for r in results]),
-                    len([r for r in results if r['total_return_pct'] > 0]),
-                    len([r for r in results if r['total_return_pct'] < 0]),
-                    np.mean([r['win_rate_pct'] for r in results]),
-                    np.mean([r['profit_factor'] for r in results]),
-                    np.mean([r['sharpe_ratio'] for r in results]),
-                    np.mean([r['max_drawdown_pct'] for r in results])
-                ]
-            }
+            valid_results = [r for r in results if r.get('close_trades_count', 0) > 0]
+            if valid_results:
+                stats_data = {
+                    '统计指标': [
+                        '总测试币种数', '平均收益率(%)', '最高收益率(%)', '最低收益率(%)',
+                        '正收益币种数', '负收益币种数', '平均胜率(%)', '平均盈亏比',
+                        '平均夏普比率', '平均最大回撤(%)',
+                        '平均多仓交易数', '平均空仓交易数', '平均多仓胜率(%)', '平均空仓胜率(%)',
+                        '平均多仓收益率(%)', '平均空仓收益率(%)',
+                        '平均持仓时间(K线)', '最长持仓时间(K线)', '最短持仓时间(K线)',
+                        '移动止损次数', '突破止损次数', '反向信号止损次数',
+                        '移动止损占比(%)', '突破止损占比(%)', '反向信号止损占比(%)',
+                        '移动止损胜率(%)', '突破止损胜率(%)', '反向信号胜率(%)',
+                        '移动止损亏损占比(%)', '突破止损亏损占比(%)', '反向信号亏损占比(%)',
+                        'ATR条件触发次数', '成交量条件触发次数',
+                        'ATR条件胜率(%)', '成交量条件胜率(%)',
+                        '平均亏损金额(%)', '最大亏损金额(%)',
+                        '平均亏损交易数', '平均盈利交易数',
+                        '移动止损平均收益率(%)', '突破止损平均收益率(%)', '反向信号平均收益率(%)'
+                    ],
+                    '数值': [
+                        len(results),
+                        np.mean([r['total_return_pct'] for r in results]),
+                        max([r['total_return_pct'] for r in results]),
+                        min([r['total_return_pct'] for r in results]),
+                        len([r for r in results if r['total_return_pct'] > 0]),
+                        len([r for r in results if r['total_return_pct'] < 0]),
+                        np.mean([r['win_rate_pct'] for r in results]),
+                        np.mean([r['profit_factor'] for r in results]),
+                        np.mean([r['sharpe_ratio'] for r in results]),
+                        np.mean([r['max_drawdown_pct'] for r in results]),
+                        np.mean([r.get('long_trades_count', 0) for r in valid_results]),
+                        np.mean([r.get('short_trades_count', 0) for r in valid_results]),
+                        np.mean([r.get('long_win_rate', 0) for r in valid_results]),
+                        np.mean([r.get('short_win_rate', 0) for r in valid_results]),
+                        np.mean([r.get('long_avg_return', 0) for r in valid_results]),
+                        np.mean([r.get('short_avg_return', 0) for r in valid_results]),
+                        np.mean([r.get('avg_holding_bars', 0) for r in valid_results]),
+                        np.max([r.get('max_holding_bars', 0) for r in valid_results]),
+                        np.min([r.get('min_holding_bars', 0) for r in valid_results]),
+                        np.mean([r.get('trailing_stop_count', 0) for r in valid_results]),
+                        np.mean([r.get('breakout_stop_count', 0) for r in valid_results]),
+                        np.mean([r.get('reverse_signal_count', 0) for r in valid_results]),
+                        np.mean([r.get('trailing_stop_ratio', 0) for r in valid_results]),
+                        np.mean([r.get('breakout_stop_ratio', 0) for r in valid_results]),
+                        np.mean([r.get('reverse_signal_ratio', 0) for r in valid_results]),
+                        np.mean([r.get('trailing_stop_win_rate', 0) for r in valid_results]),
+                        np.mean([r.get('breakout_stop_win_rate', 0) for r in valid_results]),
+                        np.mean([r.get('reverse_signal_win_rate', 0) for r in valid_results]),
+                        np.mean([r.get('loss_trailing_stop_ratio', 0) for r in valid_results]),
+                        np.mean([r.get('loss_breakout_ratio', 0) for r in valid_results]),
+                        np.mean([r.get('loss_reverse_signal_ratio', 0) for r in valid_results]),
+                        np.mean([r.get('atr_condition_count', 0) for r in valid_results]),
+                        np.mean([r.get('volume_condition_count', 0) for r in valid_results]),
+                        np.mean([r.get('atr_condition_win_rate', 0) for r in valid_results]),
+                        np.mean([r.get('volume_condition_win_rate', 0) for r in valid_results]),
+                        np.mean([r.get('avg_loss_amount', 0) for r in valid_results]),
+                        np.max([r.get('max_loss_amount', 0) for r in valid_results]),
+                        np.mean([r.get('loss_trades_count', 0) for r in valid_results]),
+                        np.mean([r.get('profit_trades_count', 0) for r in valid_results]),
+                        np.mean([r.get('trailing_stop_avg_return', 0) for r in valid_results]),
+                        np.mean([r.get('breakout_stop_avg_return', 0) for r in valid_results]),
+                        np.mean([r.get('reverse_signal_avg_return', 0) for r in valid_results])
+                    ]
+                }
+            else:
+                stats_data = {
+                    '统计指标': [
+                        '总测试币种数', '平均收益率(%)', '最高收益率(%)', '最低收益率(%)',
+                        '正收益币种数', '负收益币种数', '平均胜率(%)', '平均盈亏比',
+                        '平均夏普比率', '平均最大回撤(%)'
+                    ],
+                    '数值': [
+                        len(results),
+                        np.mean([r['total_return_pct'] for r in results]),
+                        max([r['total_return_pct'] for r in results]),
+                        min([r['total_return_pct'] for r in results]),
+                        len([r for r in results if r['total_return_pct'] > 0]),
+                        len([r for r in results if r['total_return_pct'] < 0]),
+                        np.mean([r['win_rate_pct'] for r in results]),
+                        np.mean([r['profit_factor'] for r in results]),
+                        np.mean([r['sharpe_ratio'] for r in results]),
+                        np.mean([r['max_drawdown_pct'] for r in results])
+                    ]
+                }
             stats_df = pd.DataFrame(stats_data)
             stats_df.to_excel(writer, sheet_name='统计信息', index=False)
     

@@ -31,6 +31,7 @@ class FastBacktest:
                  consecutive_bars: int = 2, atr_period: int = 14,
                  atr_threshold: float = 0.8, trailing_stop_pct: float = 0.8,
                  volume_factor: float = 1.2, use_volume: bool = True,
+                 breakout_stop_bars: int = 2,
                  buy_fee_rate: float = 0.0005, sell_fee_rate: float = 0.0005):
         """
         Initialize Fast Backtest
@@ -44,6 +45,7 @@ class FastBacktest:
             trailing_stop_pct: Trailing stop percentage
             volume_factor: Volume expansion factor
             use_volume: Whether to use volume condition
+            breakout_stop_bars: Number of consecutive bars for breakout stop
         """
         self.symbol = symbol
         self.bar = bar
@@ -53,6 +55,7 @@ class FastBacktest:
         self.trailing_stop_pct = trailing_stop_pct
         self.volume_factor = volume_factor
         self.use_volume = use_volume
+        self.breakout_stop_bars = breakout_stop_bars
         
         # 手续费参数
         self.buy_fee_rate = buy_fee_rate  # 买入手续费率 0.05%
@@ -392,11 +395,11 @@ class FastBacktest:
                     # 检查移动止损
                     trailing_stop_triggered = self._check_trailing_stop(price)
                     
-                    # 检查平仓条件 (连续2根K线反向突破)
+                    # 检查平仓条件 (连续breakout_stop_bars根K线反向突破)
                     close_signal = 0
-                    if self.position == 1 and self._check_consecutive_breakout(df, typical_prices, i, 2, direction='down'):
+                    if self.position == 1 and self._check_consecutive_breakout(df, typical_prices, i, self.breakout_stop_bars, direction='down'):
                         close_signal = -1
-                    elif self.position == -1 and self._check_consecutive_breakout(df, typical_prices, i, 2, direction='up'):
+                    elif self.position == -1 and self._check_consecutive_breakout(df, typical_prices, i, self.breakout_stop_bars, direction='up'):
                         close_signal = 1
                     
                     # 执行交易
@@ -692,6 +695,7 @@ def main():
     trailing_stop_pct = config.get('trailing_stop_pct', 0.8)
     use_volume = config.get('use_volume', True)
     volume_factor = config.get('volume_factor', 1.2)
+    breakout_stop_bars = config.get('breakout_stop_bars', 2)
     
     # 创建回测实例
     backtest = FastBacktest(
@@ -702,7 +706,8 @@ def main():
         atr_threshold=atr_threshold,
         trailing_stop_pct=trailing_stop_pct,
         volume_factor=volume_factor,
-        use_volume=use_volume
+        use_volume=use_volume,
+        breakout_stop_bars=breakout_stop_bars
     )
     
     # 运行回测
