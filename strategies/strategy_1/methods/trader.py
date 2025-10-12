@@ -194,10 +194,14 @@ class Strategy1Trader(BaseTrader):
 
         if self.is_leverage_mode():
             positions = self.client.get_positions(instId=inst_id)
+            logger.info(f"检查仓位: {inst_id}, positions={positions}")
             if positions and 'data' in positions and len(positions['data']) > 0:
+                found_position = False
                 for pos in positions['data']:
-                    if pos.get('instId') == inst_id and float(pos.get('pos', 0)) > 0:
+                    logger.info(f"仓位详情: instId={pos.get('instId')}, pos={pos.get('pos', 0)}, posSide={pos.get('posSide')}")
+                    if pos.get('instId') == inst_id and pos.get("posSide") == 'long':
                         available_sz = pos.get('pos', '0')
+                        logger.info(f"找到多仓仓位: {inst_id}, 数量={available_sz}")
                         order = self.trader.place_market_order(
                             instId=inst_id,
                             side='sell',
@@ -207,6 +211,14 @@ class Strategy1Trader(BaseTrader):
                             posSide='long'
                         )
                         return order
+                    elif pos.get('instId') == inst_id:
+                        found_position = True
+                        logger.info(f"找到仓位但不是多仓: {inst_id}, 数量={pos.get('pos', 0)}, posSide={pos.get('posSide')}")
+                
+                if not found_position:
+                    logger.warning(f"未找到 {inst_id} 的仓位信息")
+            else:
+                logger.warning(f"未获取到仓位数据或数据为空: {positions}")
         else:
             balance = self.trader.get_account_balance()
             if balance and 'data' in balance and len(balance['data']) > 0:
@@ -241,10 +253,14 @@ class Strategy1Trader(BaseTrader):
 
         if self.is_leverage_mode():
             positions = self.client.get_positions(instId=inst_id)
+            logger.info(f"检查仓位: {inst_id}, positions={positions}")
             if positions and 'data' in positions and len(positions['data']) > 0:
+                found_position = False
                 for pos in positions['data']:
-                    if pos.get('instId') == inst_id and float(pos.get('pos', 0)) < 0:
+                    logger.info(f"仓位详情: instId={pos.get('instId')}, pos={pos.get('pos', 0)}, posSide={pos.get('posSide')}")
+                    if pos.get('instId') == inst_id and pos.get("posSide") == 'short':
                         available_sz = str(abs(float(pos.get('pos', '0'))))
+                        logger.info(f"找到空仓仓位: {inst_id}, 数量={available_sz}")
                         order = self.trader.place_market_order(
                             instId=inst_id,
                             side='buy',
@@ -254,6 +270,14 @@ class Strategy1Trader(BaseTrader):
                             posSide='short'
                         )
                         return order
+                    elif pos.get('instId') == inst_id:
+                        found_position = True
+                        logger.info(f"找到仓位但不是空仓: {inst_id}, 数量={pos.get('pos', 0)}, posSide={pos.get('posSide')}")
+                
+                if not found_position:
+                    logger.warning(f"未找到 {inst_id} 的仓位信息")
+            else:
+                logger.warning(f"未获取到仓位数据或数据为空: {positions}")
         else:
             balance = self.trader.get_account_balance()
             if balance and 'data' in balance and len(balance['data']) > 0:

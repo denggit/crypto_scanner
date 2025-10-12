@@ -177,7 +177,7 @@ class BaseMonitor(ABC):
                             inst_id == f"{self.symbol}-SWAP" or
                             inst_id.replace('-SWAP', '') == self.symbol):
                             
-                            if pos_amt > 0:
+                            if pos_side == 'long':
                                 # 持有多仓
                                 self.mock_position = 1
                                 self.mock_entry_price = float(pos.get('avgPx', '0'))
@@ -185,7 +185,7 @@ class BaseMonitor(ABC):
                                 self.mock_lowest_price = self.mock_entry_price
                                 logger.info(f"同步真实仓位到模拟仓位: 持有多仓, 入场价={self.mock_entry_price:.4f}")
                                 return
-                            elif pos_amt < 0:
+                            elif pos_side == 'short':
                                 # 持有空仓
                                 self.mock_position = -1
                                 self.mock_entry_price = float(pos.get('avgPx', '0'))
