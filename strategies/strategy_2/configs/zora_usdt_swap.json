@@ -1,0 +1,15 @@
+{
+  "symbol": "ZORA-USDT-SWAP",
+  "bar": "1m",
+  "consecutive_bars": 2,
+  "atr_period": 14,
+  "atr_threshold": 0.8,
+  "volume_factor": 1.2,
+  "use_volume": true,
+  "trailing_stop_pct": 1,
+  "breakout_stop_bars": 2,
+  "trade": false,
+  "trade_amount": 10.0,
+  "trade_mode": 3,
+  "leverage": 3
+}

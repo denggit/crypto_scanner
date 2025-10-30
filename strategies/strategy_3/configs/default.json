@@ -1,0 +1,13 @@
+{
+  "symbol": "BTC-USDT",
+  "bar": "1m",
+  "min_volume_ccy": 1000000,
+  "volume_factor": 1.2,
+  "trailing_stop_pct": 0.0,
+  "take_profit_pct": 0.0,
+  "use_volume": true,
+  "trade": false,
+  "trade_amount": 10.0,
+  "trade_mode": 3,
+  "leverage": 3
+}

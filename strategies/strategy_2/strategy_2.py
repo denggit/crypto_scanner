@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from apis.okx_api.client import OKXClient
 from apis.okx_api.market_data import MarketDataRetriever
-from tools.technical_indicators import atr, sma
+from tools.technical_indicators import atr, sma, ema
 from utils.logger import logger
 
 
@@ -35,7 +35,8 @@ class HighFrequencyStrategy:
                                       volume_factor: float = 1.2,
                                       use_volume: bool = True,
                                       mock_position: int = 0,
-                                      breakout_stop_bars: int = 2) -> int:
+                                      breakout_stop_bars: int = 2,
+                                      use_ema5_close: bool = True) -> int:
         """
         计算高频策略信号
         
@@ -80,6 +81,11 @@ class HighFrequencyStrategy:
             atr_values = atr(df, atr_period)
             current_atr = atr_values.iloc[-1]
             
+            # 计算EMA5
+            current_close = df['c'].iloc[-1] if 'c' in df.columns else df['close'].iloc[-1]
+            ema5_values = ema(df, 5)
+            current_ema5 = ema5_values.iloc[-1] if len(ema5_values) > 0 else current_close
+            
             # 计算ATR均值
             atr_mean = atr_values.iloc[-atr_period:].mean() if len(atr_values) >= atr_period else current_atr
 
@@ -107,8 +113,16 @@ class HighFrequencyStrategy:
                 if not use_volume or volume_condition_met:
                     return -1
 
-            # 平仓条件 (连续breakout_stop_bars根K线反向突破)
+            # 平仓条件 (连续breakout_stop_bars根K线反向突破 + EMA5平仓规则)
             elif mock_position != 0:
+                # EMA5平仓规则
+                if use_ema5_close:
+                    if mock_position == 1 and current_close < current_ema5:
+                        return 0  # 平多仓
+                    elif mock_position == -1 and current_close > current_ema5:
+                        return 0  # 平空仓
+                
+                # 突破平仓规则
                 if mock_position == 1 and self._check_consecutive_breakout(df, typical_prices, breakout_stop_bars, direction='down'):
                     return 0
                 elif mock_position == -1 and self._check_consecutive_breakout(df, typical_prices, breakout_stop_bars, direction='up'):
@@ -204,6 +218,44 @@ class HighFrequencyStrategy:
             'lowest_price': lowest_price
         }
 
+    def calculate_take_profit(self, current_price: float, position: int, 
+                            entry_price: float, take_profit_pct: float = 2.0) -> Dict[str, Any]:
+        """
+        计算止盈
+        
+        Args:
+            current_price: 当前价格
+            position: 持仓方向 (1:多仓, -1:空仓)
+            entry_price: 入场价格
+            take_profit_pct: 止盈百分比
+            
+        Returns:
+            Dict: 包含止盈信息和是否触发的字典
+        """
+        take_profit_triggered = False
+        take_profit_price = 0.0
+        
+        if position == 1:  # 多仓
+            # 计算止盈价
+            take_profit_price = entry_price * (1 + take_profit_pct / 100.0)
+            
+            # 检查是否触发止盈
+            if current_price >= take_profit_price:
+                take_profit_triggered = True
+                
+        elif position == -1:  # 空仓
+            # 计算止盈价
+            take_profit_price = entry_price * (1 - take_profit_pct / 100.0)
+            
+            # 检查是否触发止盈
+            if current_price <= take_profit_price:
+                take_profit_triggered = True
+
+        return {
+            'take_profit_triggered': take_profit_triggered,
+            'take_profit_price': take_profit_price
+        }
+
     def get_strategy_details(self, symbol: str, bar: str = '1m', 
                            consecutive_bars: int = 2,
                            atr_period: int = 14,
@@ -211,7 +263,8 @@ class HighFrequencyStrategy:
                            volume_factor: float = 1.2,
                            use_volume: bool = True,
                            mock_position: int = 0,
-                           breakout_stop_bars: int = 2) -> dict:
+                           breakout_stop_bars: int = 2,
+                           use_ema5_close: bool = True) -> dict:
         """
         获取策略详细信息，用于调试和分析
         
@@ -251,6 +304,11 @@ class HighFrequencyStrategy:
             atr_values = atr(df, atr_period)
             current_atr = atr_values.iloc[-1]
             
+            # 计算EMA5
+            current_close = df['c'].iloc[-1] if 'c' in df.columns else df['close'].iloc[-1]
+            ema5_values = ema(df, 5)
+            current_ema5 = ema5_values.iloc[-1] if len(ema5_values) > 0 else current_close
+            
             # 计算ATR均值
             atr_mean = atr_values.iloc[-atr_period:].mean() if len(atr_values) >= atr_period else current_atr
 
@@ -271,7 +329,7 @@ class HighFrequencyStrategy:
 
             # 计算信号
             signal = self.calculate_high_frequency_signal(symbol, bar, consecutive_bars, atr_period, 
-                                                         atr_threshold, volume_factor, use_volume, mock_position, breakout_stop_bars)
+                                                         atr_threshold, volume_factor, use_volume, mock_position, breakout_stop_bars, use_ema5_close)
 
             return {
                 'symbol': symbol,
@@ -288,6 +346,11 @@ class HighFrequencyStrategy:
                 'breakout_stop_bars': breakout_stop_bars,
                 'current_volume': float(current_volume),
                 'avg_volume': float(avg_volume),
+                'ema5': float(current_ema5),
+                'ema5_close_condition': use_ema5_close and (
+                    (mock_position == 1 and current_close < current_ema5) or
+                    (mock_position == -1 and current_close > current_ema5)
+                ) if mock_position != 0 else False,
                 'signal': signal
             }
             

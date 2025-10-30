@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 @File       : shared_config.py
-@Description: Shared configuration functions for strategy 2
+@Description: Shared configuration functions for strategy 3
 """
 
 import json
@@ -24,7 +24,7 @@ def load_config_from_file(config_path: str) -> dict:
 
 def get_user_input(default_config: dict = None) -> dict:
     """获取用户输入参数，使用配置文件的默认值"""
-    logger.info("高频策略参数配置")
+    logger.info("长下影线策略参数配置")
     logger.info("=" * 50)
 
     # 使用配置文件的默认值
@@ -33,48 +33,31 @@ def get_user_input(default_config: dict = None) -> dict:
 
     default_symbol = default_config.get('symbol', 'BTC-USDT')
     default_bar = default_config.get('bar', '1m')
-    default_consecutive_bars = default_config.get('consecutive_bars', 2)
-    default_atr_period = default_config.get('atr_period', 14)
-    default_atr_threshold = default_config.get('atr_threshold', 0.8)
+    default_min_volume_ccy = default_config.get('min_volume_ccy', 100000)
+    default_volume_factor = default_config.get('volume_factor', 1.2)
     default_trailing_stop_pct = default_config.get('trailing_stop_pct', 0.8)
     default_take_profit_pct = default_config.get('take_profit_pct', 2.0)
-    default_use_ema5_close = default_config.get('use_ema5_close', True)
     default_trade = default_config.get('trade', False)
     default_trade_amount = default_config.get('trade_amount', 10.0)
     default_trade_mode = default_config.get('trade_mode', 3)
     default_leverage = default_config.get('leverage', 3)
     default_use_volume = default_config.get('use_volume', True)
-    default_volume_factor = default_config.get('volume_factor', 1.2)
-    default_breakout_stop_bars = default_config.get('breakout_stop_bars', 2)
-    default_params = default_config.get('params', {})
 
     try:
         symbol = input(f"请输入交易对 (默认 {default_symbol}): ").strip() or default_symbol
         bar = input(f"请输入K线周期 (默认 {default_bar}): ").strip() or default_bar
         
-        consecutive_bars_input = input(f"请输入连续K线数量 (默认 {default_consecutive_bars}): ").strip()
-        consecutive_bars = int(consecutive_bars_input) if consecutive_bars_input else default_consecutive_bars
+        min_volume_input = input(f"请输入最小24小时交易量 (默认 {default_min_volume_ccy} USDT): ").strip()
+        min_volume_ccy = float(min_volume_input) if min_volume_input else default_min_volume_ccy
         
-        atr_period_input = input(f"请输入ATR周期 (默认 {default_atr_period}): ").strip()
-        atr_period = int(atr_period_input) if atr_period_input else default_atr_period
-        
-        atr_threshold_input = input(f"请输入ATR阈值 (默认 {default_atr_threshold}): ").strip()
-        atr_threshold = float(atr_threshold_input) if atr_threshold_input else default_atr_threshold
+        volume_factor_input = input(f"请输入成交量放大倍数 (默认 {default_volume_factor}): ").strip()
+        volume_factor = float(volume_factor_input) if volume_factor_input else default_volume_factor
         
         trailing_stop_input = input(f"请输入移动止损百分比 (默认 {default_trailing_stop_pct}%): ").strip()
         trailing_stop_pct = float(trailing_stop_input) if trailing_stop_input else default_trailing_stop_pct
         
         take_profit_input = input(f"请输入止盈百分比 (默认 {default_take_profit_pct}%): ").strip()
         take_profit_pct = float(take_profit_input) if take_profit_input else default_take_profit_pct
-        
-        use_ema5_close_input = input(f"是否使用EMA5平仓规则 (y/n, 默认 {'y' if default_use_ema5_close else 'n'}): ").strip().lower()
-        if use_ema5_close_input:
-            use_ema5_close = use_ema5_close_input == 'y' or use_ema5_close_input == 'yes'
-        else:
-            use_ema5_close = default_use_ema5_close
-
-        breakout_stop_input = input(f"请输入突破止损K线数量 (默认 {default_breakout_stop_bars}): ").strip()
-        breakout_stop_bars = int(breakout_stop_input) if breakout_stop_input else default_breakout_stop_bars
 
         trade_input = input(f"是否真实交易 (y/n, 默认 {'y' if default_trade else 'n'}): ").strip().lower()
         if trade_input:
@@ -82,17 +65,11 @@ def get_user_input(default_config: dict = None) -> dict:
         else:
             trade = default_trade
 
-        # 成交量条件
         use_volume_input = input(f"是否使用成交量条件 (y/n, 默认 {'y' if default_use_volume else 'n'}): ").strip().lower()
         if use_volume_input:
             use_volume = use_volume_input == 'y' or use_volume_input == 'yes'
         else:
             use_volume = default_use_volume
-
-        volume_factor = default_volume_factor
-        if use_volume:
-            volume_factor_input = input(f"请输入成交量放大倍数 (默认 {default_volume_factor}): ").strip()
-            volume_factor = float(volume_factor_input) if volume_factor_input else default_volume_factor
 
         trade_amount = default_trade_amount
         trade_mode = default_trade_mode
@@ -122,16 +99,12 @@ def get_user_input(default_config: dict = None) -> dict:
         # 使用默认配置
         symbol = default_symbol
         bar = default_bar
-        consecutive_bars = default_consecutive_bars
-        atr_period = default_atr_period
-        atr_threshold = default_atr_threshold
+        min_volume_ccy = default_min_volume_ccy
+        volume_factor = default_volume_factor
         trailing_stop_pct = default_trailing_stop_pct
         take_profit_pct = default_take_profit_pct
-        use_ema5_close = default_use_ema5_close
-        breakout_stop_bars = default_breakout_stop_bars
         trade = default_trade
         use_volume = default_use_volume
-        volume_factor = default_volume_factor
         trade_amount = default_trade_amount
         trade_mode = default_trade_mode
         leverage = default_leverage
@@ -139,19 +112,15 @@ def get_user_input(default_config: dict = None) -> dict:
     return {
         'symbol': symbol,
         'bar': bar,
-        'consecutive_bars': consecutive_bars,
-        'atr_period': atr_period,
-        'atr_threshold': atr_threshold,
+        'min_volume_ccy': min_volume_ccy,
+        'volume_factor': volume_factor,
         'trailing_stop_pct': trailing_stop_pct,
         'take_profit_pct': take_profit_pct,
-        'use_ema5_close': use_ema5_close,
-        'breakout_stop_bars': breakout_stop_bars,
         'trade': trade,
         'trade_amount': trade_amount,
         'trade_mode': trade_mode,
         'leverage': leverage,
         'use_volume': use_volume,
-        'volume_factor': volume_factor,
         'params': {
             'volume_factor': volume_factor,
             'use_volume': use_volume
@@ -163,35 +132,26 @@ def print_final_config(config: dict):
     """打印最终使用的参数"""
     symbol = config.get('symbol', 'BTC-USDT')
     bar = config.get('bar', '1m')
-    consecutive_bars = config.get('consecutive_bars', 2)
-    atr_period = config.get('atr_period', 14)
-    atr_threshold = config.get('atr_threshold', 0.8)
+    min_volume_ccy = config.get('min_volume_ccy', 100000)
+    volume_factor = config.get('volume_factor', 1.2)
     trailing_stop_pct = config.get('trailing_stop_pct', 0.8)
     take_profit_pct = config.get('take_profit_pct', 2.0)
-    use_ema5_close = config.get('use_ema5_close', True)
-    breakout_stop_bars = config.get('breakout_stop_bars', 2)
     trade = config.get('trade', False)
     trade_amount = config.get('trade_amount', 10.0)
     trade_mode = config.get('trade_mode', 3)
     leverage = config.get('leverage', 3)
     use_volume = config.get('use_volume', True)
-    volume_factor = config.get('volume_factor', 1.2)
 
     logger.info("\n" + "=" * 50)
     logger.info("本次运行使用的最终参数:")
     logger.info(f"  交易对: {symbol}")
     logger.info(f"  K线周期: {bar}")
-    logger.info(f"  连续K线: {consecutive_bars}")
-    logger.info(f"  ATR周期: {atr_period}")
-    logger.info(f"  ATR阈值: {atr_threshold}")
+    logger.info(f"  最小24小时交易量: {min_volume_ccy} USDT")
+    logger.info(f"  成交量放大倍数: {volume_factor}")
     logger.info(f"  移动止损: {trailing_stop_pct}%")
     logger.info(f"  止盈: {take_profit_pct}%")
-    logger.info(f"  EMA5平仓规则: {'启用' if use_ema5_close else '禁用'}")
-    logger.info(f"  突破止损K线: {breakout_stop_bars}")
     logger.info(f"  真实交易: {'是' if trade else '否'}")
     logger.info(f"  使用成交量: {'是' if use_volume else '否'}")
-    if use_volume:
-        logger.info(f"  成交量倍数: {volume_factor}")
     
     if trade:
         trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}

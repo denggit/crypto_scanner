@@ -10,6 +10,7 @@
 from .client import OKXClient, OKXAPIException
 from .market_data import MarketDataRetriever
 from .trader import Trader
+from .websocket_client import OKXWebSocketClient, OKXWebSocketException
 from .models import Ticker, OrderBook, Candle, Balance, Order, MarketData, AccountData
 
 __all__ = [
@@ -17,6 +18,8 @@ __all__ = [
     'OKXAPIException',
     'MarketDataRetriever',
     'Trader',
+    'OKXWebSocketClient',
+    'OKXWebSocketException',
     'Ticker',
     'OrderBook',
     'Candle',

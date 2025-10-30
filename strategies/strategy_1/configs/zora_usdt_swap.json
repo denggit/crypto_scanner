@@ -1,0 +1,20 @@
+{
+  "symbol": "ZORA-USDT-SWAP",
+  "bar": "1m",
+  "short_ma": 5,
+  "long_ma": 20,
+  "mode": "loose",
+  "trailing_stop_pct": 5.0,
+  "trade": false,
+  "trade_amount": 10.0,
+  "trade_mode": 3,
+  "leverage": 20,
+  "assist_cond": "rsi",
+  "params": {
+    "vol_multiplier": 1.2,
+    "confirmation_pct": 0.2,
+    "rsi_period": 9,
+    "rsi_long_entry": 55,
+    "rsi_short_entry": 45
+  }
+}
