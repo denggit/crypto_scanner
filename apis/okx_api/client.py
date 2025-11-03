@@ -1,17 +1,20 @@
-import hashlib
+import hmac
+import base64
 import hmac
 import json
-import time
-import requests
-import base64
-from typing import Dict, Any, Optional
-from urllib.parse import urlencode
 import threading
+import time
 from time import sleep
+from typing import Dict
+from urllib.parse import urlencode
+
+import requests
+
 
 class OKXAPIException(Exception):
     """Custom exception for OKX API errors"""
     pass
+
 
 class OKXClient:
     """
@@ -158,7 +161,8 @@ class OKXClient:
         if signed and self.api_key and self.api_secret and self.passphrase:
             timestamp = self._get_server_time()
             headers['OK-ACCESS-KEY'] = self.api_key
-            headers['OK-ACCESS-SIGN'] = self._sign_request(timestamp, method, endpoint, json.dumps(params) if params else '')
+            headers['OK-ACCESS-SIGN'] = self._sign_request(timestamp, method, endpoint,
+                                                           json.dumps(params) if params else '')
             headers['OK-ACCESS-TIMESTAMP'] = timestamp
             headers['OK-ACCESS-PASSPHRASE'] = self.passphrase
 
@@ -227,6 +231,12 @@ class OKXClient:
 
         Returns:
             Order book data
+
+        返回参数
+            参数名	类型	描述
+            asks	Array of Arrays	卖方深度
+            bids	Array of Arrays	买方深度
+            ts	String	深度产生的时间
         """
         endpoint = "/api/v5/market/books"
         params = {'instId': instId, 'sz': sz}
@@ -259,8 +269,8 @@ class OKXClient:
         return self._make_request('GET', endpoint, signed=True)
 
     def place_order(self, instId: str, tdMode: str, side: str, ordType: str,
-                   sz: str = None, px: str = None, reduceOnly: bool = False, 
-                   tgtCcy: str = 'quote_ccy', posSide: str = None) -> Dict:
+                    sz: str = None, px: str = None, reduceOnly: bool = False,
+                    tgtCcy: str = 'quote_ccy', posSide: str = None) -> Dict:
         """
         Place order (requires authentication)
 
@@ -285,7 +295,7 @@ class OKXClient:
             'side': side,
             'ordType': ordType
         }
-        
+
         if sz:
             params['sz'] = sz
         if px:
@@ -317,7 +327,7 @@ class OKXClient:
         if state:
             params['state'] = state
         return self._make_request('GET', endpoint, params, signed=True)
-    
+
     def set_leverage(self, instId: str, lever: str, mgnMode: str = 'isolated', posSide: str = 'long') -> Dict:
         """
         Set leverage for instrument (requires authentication)
@@ -339,7 +349,7 @@ class OKXClient:
             'posSide': posSide
         }
         return self._make_request('POST', endpoint, params, signed=True)
-    
+
     def get_positions(self, instId: str = None) -> Dict:
         """
         Get positions (requires authentication)
@@ -356,7 +366,7 @@ class OKXClient:
         # if instId:
         #     params['instId'] = instId
         return self._make_request('GET', endpoint, params, signed=True)
-    
+
     def get_instruments(self, instType: str, instId: str = None) -> Dict:
         """
         Get instrument information
@@ -373,3 +383,19 @@ class OKXClient:
         if instId:
             params['instId'] = instId
         return self._make_request('GET', endpoint, params)
+
+
+def get_okx_client():
+    import os
+    # 加载环境变量
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    # 从环境变量获取API凭证（如果存在）
+    api_key = os.getenv('OK-ACCESS-KEY')
+    api_secret = os.getenv('OK-ACCESS-SECRET')
+    passphrase = os.getenv('OK-ACCESS-PASSPHRASE')
+
+    client = OKXClient(api_key=api_key, api_secret=api_secret, passphrase=passphrase)
+
+    return client
