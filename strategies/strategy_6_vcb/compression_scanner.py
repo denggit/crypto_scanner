@@ -37,7 +37,8 @@ class CompressionScanner:
                  min_vol_ccy: float = 10000000,  # 最小24h交易量（USDT）
                  currency: str = 'USDT',
                  inst_type: str = 'SWAP',
-                 max_workers: int = 10):
+                 max_workers: int = 10,
+                 only_major_coins: bool = False):
         """
         初始化压缩扫描器
         
@@ -48,6 +49,7 @@ class CompressionScanner:
             currency: 交易对货币（默认USDT）
             inst_type: 合约类型（默认SWAP）
             max_workers: 并行扫描的最大线程数
+            only_major_coins: 是否只扫描主流币
         """
         self.client = client
         self.strategy = strategy
@@ -55,6 +57,7 @@ class CompressionScanner:
         self.currency = currency
         self.inst_type = inst_type
         self.max_workers = max_workers
+        self.only_major_coins = only_major_coins
         
         self.market_data_retriever = MarketDataRetriever(client)
         self.scanner = CryptoScanner(client)
@@ -196,13 +199,28 @@ class CompressionScanner:
             list: 币种符号列表
         """
         try:
-            # 使用 CryptoScanner 获取符合条件的币种
+            # 使用 CryptoScanner 获取符合条件的币种，扫描现货交易量比扫描永续合约交易量更加安全
             symbols = self.scanner._get_volume_filtered_symbols(
                 currency=self.currency,
                 min_vol_ccy=self.min_vol_ccy,
                 use_cache=True,
-                inst_type=self.inst_type
+                # inst_type=self.inst_type
             )
+
+            if self.inst_type == "SWAP":
+                for i in range(len(symbols)):
+                    symbols[i] = symbols[i] + "-SWAP"
+            
+            # 如果只做主流币，进行过滤
+            if self.only_major_coins:
+                from strategies.strategy_6_vcb.methods.position_manager import MAJOR_COINS
+                filtered_symbols = []
+                for symbol in symbols:
+                    base_coin = symbol.split('-')[0]
+                    if base_coin in MAJOR_COINS:
+                        filtered_symbols.append(symbol)
+                symbols = filtered_symbols
+                logger.info(f"主流币过滤后剩余 {len(symbols)} 个币种")
             
             return symbols if symbols else []
             

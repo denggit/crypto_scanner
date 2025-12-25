@@ -27,6 +27,7 @@ load_dotenv()
 from strategies.strategy_6_vcb.compression_scanner import CompressionScanner
 from strategies.strategy_6_vcb.breakout_watcher import BreakoutWatcher
 from strategies.strategy_6_vcb.methods.trader import Strategy6Trader
+from strategies.strategy_6_vcb.methods.position_manager import PositionManager
 from strategies.strategy_6_vcb.strategy_6 import VCBStrategy
 from apis.okx_api.client import OKXClient, get_okx_client
 from apis.okx_api.market_data import MarketDataRetriever
@@ -73,7 +74,16 @@ class VCBMarketMonitor:
                  # 风险管理参数
                  trailing_stop_pct: float = 1.0,
                  stop_loss_atr_multiplier: float = 0.8,
-                 take_profit_r: float = 2.0):
+                 take_profit_r: float = 2.0,
+                 take_profit_mode: str = 'r_multiple',  # 'r_multiple', 'bb_middle', 'bb_opposite', 'atr_trailing'
+                 take_profit_r_major: float = 1.5,
+                 take_profit_r_alt: float = 2.5,
+                 failure_exit_bars: int = 10,
+                 failure_exit_atr_threshold: float = 1.2,
+                 break_even_r: float = 1.0,
+                 
+                 # 币种过滤参数
+                 only_major_coins: bool = False):
         """
         初始化VCB市场监控器
         
@@ -103,7 +113,14 @@ class VCBMarketMonitor:
             
             trailing_stop_pct: 移动止损百分比
             stop_loss_atr_multiplier: 止损ATR倍数
-            take_profit_r: 止盈R倍数
+            take_profit_r: 止盈R倍数（默认）
+            take_profit_mode: 止盈模式
+            take_profit_r_major: 主流币止盈R倍数
+            take_profit_r_alt: 山寨币止盈R倍数
+            failure_exit_bars: 失败退出K线数量
+            failure_exit_atr_threshold: 失败退出ATR阈值
+            break_even_r: Break-even触发R倍数
+            only_major_coins: 是否只做主流币
         """
         # 保存参数
         self.min_vol_ccy = min_vol_ccy
@@ -128,10 +145,32 @@ class VCBMarketMonitor:
         self.trailing_stop_pct = trailing_stop_pct
         self.stop_loss_atr_multiplier = stop_loss_atr_multiplier
         self.take_profit_r = take_profit_r
+        self.take_profit_mode = take_profit_mode
+        self.take_profit_r_major = take_profit_r_major
+        self.take_profit_r_alt = take_profit_r_alt
+        self.failure_exit_bars = failure_exit_bars
+        self.failure_exit_atr_threshold = failure_exit_atr_threshold
+        self.break_even_r = break_even_r
+        self.only_major_coins = only_major_coins
 
         self.client = get_okx_client()
         self.strategy = VCBStrategy(self.client)
         self.market_data_retriever = MarketDataRetriever(self.client)
+        
+        # 初始化仓位管理器
+        self.position_manager = PositionManager(
+            market_data_retriever=self.market_data_retriever,
+            bar=bar,
+            atr_mid_period=atr_mid_period,
+            stop_loss_atr_multiplier=stop_loss_atr_multiplier,
+            take_profit_mode=take_profit_mode,
+            take_profit_r=take_profit_r,
+            take_profit_r_major=take_profit_r_major,
+            take_profit_r_alt=take_profit_r_alt,
+            failure_exit_bars=failure_exit_bars,
+            failure_exit_atr_threshold=failure_exit_atr_threshold,
+            break_even_r=break_even_r
+        )
         
         # 初始化扫描器和监控器
         self.scanner = CompressionScanner(
@@ -140,7 +179,8 @@ class VCBMarketMonitor:
             min_vol_ccy=min_vol_ccy,
             currency=currency,
             inst_type=inst_type,
-            max_workers=max_workers
+            max_workers=max_workers,
+            only_major_coins=only_major_coins
         )
         
         self.watcher = BreakoutWatcher(
@@ -173,7 +213,7 @@ class VCBMarketMonitor:
         """初始化交易记录CSV文件"""
         try:
             # 创建交易记录目录
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             trading_records_dir = os.path.join(project_root, "trading_records", "strategy_6_vcb")
             
             if not os.path.exists(trading_records_dir):
@@ -270,6 +310,38 @@ class VCBMarketMonitor:
             # 记录模拟交易
             logger.info(f"[模拟交易] {symbol} {action}: 价格={price:.4f}")
             
+            # 获取压缩事件（用于计算止损止盈）
+            compression_event = details.get('compression_event')
+            
+            # 计算止损和止盈价格
+            stop_loss = self.position_manager.calculate_stop_loss(
+                symbol=symbol,
+                entry_price=price,
+                position=signal,
+                compression_event=compression_event
+            )
+            
+            take_profit = self.position_manager.calculate_take_profit(
+                symbol=symbol,
+                entry_price=price,
+                stop_loss=stop_loss,
+                position=signal,
+                compression_event=compression_event
+            )
+            
+            # 获取入场时的ATR（用于失败退出检查）
+            entry_atr = None
+            try:
+                limit = self.atr_mid_period + 5
+                df = self.market_data_retriever.get_kline(symbol, self.bar, limit)
+                if df is not None and len(df) >= 10:
+                    from tools.technical_indicators import atr
+                    atr_short = atr(df, 10)
+                    if len(atr_short) > 0:
+                        entry_atr = float(atr_short.iloc[-1])
+            except:
+                pass
+            
             # 更新持仓
             if symbol not in self.positions:
                 # 新开仓
@@ -278,8 +350,14 @@ class VCBMarketMonitor:
                     'entry_price': price,
                     'entry_time': datetime.now(),
                     'highest_price': price if signal == 1 else price,
-                    'lowest_price': price if signal == -1 else price
+                    'lowest_price': price if signal == -1 else price,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'entry_atr': entry_atr,
+                    'compression_event': compression_event
                 }
+                
+                logger.info(f"📊 {symbol} 开仓: 入场={price:.4f}, 止损={stop_loss:.4f}, 止盈={take_profit:.4f}")
                 
                 # 记录开仓交易
                 self._record_trade(
@@ -315,14 +393,49 @@ class VCBMarketMonitor:
                         pnl=pnl
                     )
                 
+                # 计算新持仓的止损止盈
+                new_stop_loss = self.position_manager.calculate_stop_loss(
+                    symbol=symbol,
+                    entry_price=price,
+                    position=signal,
+                    compression_event=compression_event
+                )
+                
+                new_take_profit = self.position_manager.calculate_take_profit(
+                    symbol=symbol,
+                    entry_price=price,
+                    stop_loss=new_stop_loss,
+                    position=signal,
+                    compression_event=compression_event
+                )
+                
+                # 获取入场时的ATR
+                entry_atr = None
+                try:
+                    limit = self.atr_mid_period + 5
+                    df = self.market_data_retriever.get_kline(symbol, self.bar, limit)
+                    if df is not None and len(df) >= 10:
+                        from tools.technical_indicators import atr
+                        atr_short = atr(df, 10)
+                        if len(atr_short) > 0:
+                            entry_atr = float(atr_short.iloc[-1])
+                except:
+                    pass
+                
                 # 更新为新持仓
                 self.positions[symbol] = {
                     'position': signal,
                     'entry_price': price,
                     'entry_time': datetime.now(),
                     'highest_price': price if signal == 1 else price,
-                    'lowest_price': price if signal == -1 else price
+                    'lowest_price': price if signal == -1 else price,
+                    'stop_loss': new_stop_loss,
+                    'take_profit': new_take_profit,
+                    'entry_atr': entry_atr,
+                    'compression_event': compression_event
                 }
+                
+                logger.info(f"📊 {symbol} 换仓: 入场={price:.4f}, 止损={new_stop_loss:.4f}, 止盈={new_take_profit:.4f}")
                 
                 # 记录新开仓交易
                 self._record_trade(
@@ -346,6 +459,177 @@ class VCBMarketMonitor:
             
         except Exception as e:
             logger.error(f"执行交易时出错 {symbol}: {e}")
+    
+    def _check_positions(self):
+        """
+        检查所有持仓的平仓条件
+        
+        包括：
+        1. 硬止损检查
+        2. 主动止盈检查
+        3. 失败退出检查
+        4. Break-even检查
+        """
+        if not self.positions:
+            return
+        
+        positions_to_close = []
+        
+        for symbol, position_info in list(self.positions.items()):
+            try:
+                position = position_info.get('position', 0)
+                if position == 0:
+                    continue
+                
+                entry_price = position_info.get('entry_price', 0)
+                entry_time = position_info.get('entry_time')
+                stop_loss = position_info.get('stop_loss', 0)
+                take_profit = position_info.get('take_profit', 0)
+                entry_atr = position_info.get('entry_atr')
+                compression_event = position_info.get('compression_event')
+                
+                if entry_price <= 0:
+                    continue
+                
+                # 获取当前价格
+                ticker = self.market_data_retriever.get_ticker_by_symbol(symbol)
+                if not ticker or not ticker.last:
+                    continue
+                
+                current_price = float(ticker.last)
+                
+                # 更新最高/最低价
+                if position == 1:
+                    position_info['highest_price'] = max(position_info.get('highest_price', current_price), current_price)
+                else:
+                    position_info['lowest_price'] = min(position_info.get('lowest_price', current_price), current_price)
+                
+                # 1. 检查硬止损
+                should_close, reason = self.position_manager.check_hard_stop_loss(
+                    symbol=symbol,
+                    current_price=current_price,
+                    position=position,
+                    stop_loss=stop_loss
+                )
+                
+                if should_close:
+                    positions_to_close.append((symbol, reason, current_price))
+                    continue
+                
+                # 2. 检查Break-even（更新止损）
+                should_update_sl, new_stop_loss = self.position_manager.check_break_even(
+                    symbol=symbol,
+                    current_price=current_price,
+                    position=position,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss
+                )
+                
+                if should_update_sl and new_stop_loss != stop_loss:
+                    position_info['stop_loss'] = new_stop_loss
+                    logger.info(f"🔄 {symbol} Break-even触发: 止损更新为 {new_stop_loss:.4f}")
+                
+                # 3. 检查主动止盈
+                should_close, reason, new_take_profit = self.position_manager.check_take_profit(
+                    symbol=symbol,
+                    current_price=current_price,
+                    position=position,
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    compression_event=compression_event
+                )
+                
+                if should_close:
+                    positions_to_close.append((symbol, reason, current_price))
+                    continue
+                
+                # 如果止盈价格更新（ATR跟踪）
+                if new_take_profit and new_take_profit != take_profit:
+                    position_info['take_profit'] = new_take_profit
+                
+                # 4. 检查失败退出
+                if entry_time and entry_atr:
+                    should_close, reason = self.position_manager.check_failure_exit(
+                        symbol=symbol,
+                        entry_time=entry_time,
+                        entry_atr=entry_atr
+                    )
+                    
+                    if should_close:
+                        positions_to_close.append((symbol, reason, current_price))
+                        continue
+                
+            except Exception as e:
+                logger.error(f"检查持仓 {symbol} 时出错: {e}")
+                continue
+        
+        # 执行平仓
+        for symbol, reason, close_price in positions_to_close:
+            self._close_position(symbol, reason, close_price)
+    
+    def _close_position(self, symbol: str, reason: str, close_price: float):
+        """
+        平仓
+        
+        Args:
+            symbol: 交易对符号
+            reason: 平仓原因
+            close_price: 平仓价格
+        """
+        if symbol not in self.positions:
+            return
+        
+        try:
+            position_info = self.positions[symbol]
+            position = position_info.get('position', 0)
+            entry_price = position_info.get('entry_price', 0)
+            
+            if position == 0 or entry_price <= 0:
+                return
+            
+            # 确定杠杆倍数
+            actual_leverage = 1 if self.trade_mode == 1 else self.leverage
+            
+            # 计算盈亏
+            if position == 1:
+                return_rate = (close_price - entry_price) / entry_price
+                pnl = self.trade_amount * return_rate * actual_leverage
+                close_trade_type = "卖"
+            else:
+                return_rate = (entry_price - close_price) / entry_price
+                pnl = self.trade_amount * return_rate * actual_leverage
+                close_trade_type = "买"
+            
+            logger.info(f"🔴 {symbol} 平仓 [{reason}]: 入场={entry_price:.4f}, 平仓={close_price:.4f}, "
+                       f"收益率={return_rate*100:.2f}%, 盈亏={pnl:.4f} USDT")
+            
+            # 记录平仓交易
+            self._record_trade(
+                symbol=symbol,
+                trade_type=close_trade_type,
+                trade_amount=self.trade_amount,
+                leverage=actual_leverage,
+                pnl=pnl
+            )
+            
+            # 真实交易平仓
+            if self.trade and self.trader:
+                try:
+                    action = "LONG_CLOSE" if position == 1 else "SHORT_CLOSE"
+                    trade_result = self.trader.execute_trade(action, symbol, close_price)
+                    if trade_result:
+                        logger.info(f"✅ [真实交易] {symbol} {action} 成功")
+                    else:
+                        logger.error(f"❌ [真实交易] {symbol} {action} 失败")
+                except Exception as e:
+                    logger.error(f"❌ [真实交易] {symbol} 平仓异常: {e}")
+            
+            # 移除持仓
+            del self.positions[symbol]
+            
+        except Exception as e:
+            logger.error(f"平仓 {symbol} 时出错: {e}")
     
     def _scan_loop(self):
         """扫描循环（生产者线程）"""
@@ -399,6 +683,9 @@ class VCBMarketMonitor:
                     volume_period=self.volume_period,
                     volume_multiplier=self.volume_multiplier
                 )
+                
+                # 检查所有持仓的平仓条件
+                self._check_positions()
                 
                 # 清理过期压缩事件
                 self.strategy.cleanup_compression_pool(

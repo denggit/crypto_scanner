@@ -4,7 +4,7 @@
 @Author     : Zijun Deng
 @Date       : 2025
 @File       : strategy_6_monitor.py
-@Description: VCB策略实盘模拟监控系统
+@Description: VCB策略实盘模拟监控系统，单币种
 """
 
 import argparse

@@ -218,14 +218,28 @@ class MarketDataRetriever:
         """
         tickers = self.get_all_tickers(instType, currency)
 
-        # Filter by minimum volume
+        # Filter by minimum volume (确保 volCcy24h 是有效的数值)
         filtered_symbols = []
+        volume_dict = {}
+        
         for ticker in tickers:
-            if ticker.volCcy24h >= min_vol_ccy:
+            # 确保 volCcy24h 是有效的数值类型
+            vol_ccy = ticker.volCcy24h
+            if vol_ccy is None:
+                continue
+            
+            # 转换为 float（处理可能的字符串类型）
+            try:
+                vol_ccy_float = float(vol_ccy)
+            except (ValueError, TypeError):
+                continue
+            
+            # 检查是否满足最小交易量要求
+            if vol_ccy_float >= min_vol_ccy:
                 filtered_symbols.append(ticker.instId)
+                volume_dict[ticker.instId] = vol_ccy_float
 
         # Sort by volume (descending)
-        volume_dict = {ticker.instId: ticker.volCcy24h for ticker in tickers}
         filtered_symbols.sort(key=lambda x: volume_dict.get(x, 0), reverse=True)
 
         return filtered_symbols
