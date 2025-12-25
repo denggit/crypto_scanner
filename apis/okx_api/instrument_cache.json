@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "created_at": "2025-10-11T22:33:17.227748",
-  "last_updated": "2025-10-12T06:59:59.584292",
+  "last_updated": "2025-12-26T01:13:52.679043",
   "instruments": {
     "PEPE-USDT-SWAP": {
       "data": {
@@ -418,6 +418,38 @@
       },
       "last_updated": "2025-10-12T06:59:59.584282",
       "inst_id": "ZK-USDT-SWAP"
+    },
+    "PIPPIN-USDT-SWAP": {
+      "data": {
+        "instId": "PIPPIN-USDT-SWAP",
+        "uly": "PIPPIN-USDT",
+        "category": "1",
+        "baseCcy": "",
+        "quoteCcy": "",
+        "settleCcy": "USDT",
+        "ctVal": "10",
+        "ctMult": "1",
+        "ctValCcy": "PIPPIN",
+        "optType": "",
+        "stk": "",
+        "listTime": "1764687600000",
+        "expTime": "",
+        "lever": "20",
+        "tickSz": "0.00001",
+        "lotSz": "1",
+        "minSz": "1",
+        "ctType": "linear",
+        "alias": "",
+        "state": "live",
+        "maxLmtSz": "100000000",
+        "maxMktSz": "50000",
+        "maxTwapSz": "100000000.0000000000000000",
+        "maxIcebergSz": "100000000.0000000000000000",
+        "maxTriggerSz": "100000000.0000000000000000",
+        "maxStopSz": "50000"
+      },
+      "last_updated": "2025-12-26T01:13:52.679030",
+      "inst_id": "PIPPIN-USDT-SWAP"
     }
   }
 }

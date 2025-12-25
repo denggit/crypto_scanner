@@ -1,8 +1,8 @@
 {
-  "min_vol_ccy": 1000000,
+  "min_vol_ccy": 100000000,
   "currency": "USDT",
   "inst_type": "SWAP",
-  "scan_interval_minutes": 5,
+  "scan_interval_minutes": 1,
   "max_workers": 10,
   "only_major_coins": false,
   "bar": "1m",
@@ -24,9 +24,9 @@
   "failure_exit_bars": 10,
   "failure_exit_atr_threshold": 1.2,
   "break_even_r": 1.0,
-  "trade": false,
-  "trade_amount": 10.0,
+  "trade": true,
+  "trade_amount": 2.0,
   "trade_mode": 3,
-  "leverage": 3
+  "leverage": 10
 }
 

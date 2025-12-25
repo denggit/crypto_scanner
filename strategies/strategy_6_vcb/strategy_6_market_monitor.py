@@ -246,7 +246,7 @@ class VCBMarketMonitor:
         
         Args:
             symbol: 交易对符号
-            trade_type: 交易类型（"买" 或 "卖"）
+            trade_type: 交易类型（"开仓做多"、"开仓做空"、"做多平仓"、"做空平仓"）
             trade_amount: 成交额（USDT）
             leverage: 杠杆倍数（现货为1）
             pnl: 平仓盈亏（USDT），开仓时为None
@@ -302,7 +302,7 @@ class VCBMarketMonitor:
         """
         try:
             action = "LONG_OPEN" if signal == 1 else "SHORT_OPEN"
-            trade_type = "买" if signal == 1 else "卖"
+            trade_type = "开仓做多" if signal == 1 else "开仓做空"
             
             # 确定杠杆倍数（现货为1，杠杆模式使用配置的杠杆）
             actual_leverage = 1 if self.trade_mode == 1 else self.leverage
@@ -384,7 +384,7 @@ class VCBMarketMonitor:
                     logger.info(f"[模拟交易] {symbol} 平仓: 收益率={return_rate*100:.2f}%, 盈亏={pnl:.4f} USDT")
                     
                     # 记录平仓交易
-                    close_trade_type = "卖" if old_position == 1 else "买"
+                    close_trade_type = "做多平仓" if old_position == 1 else "做空平仓"
                     self._record_trade(
                         symbol=symbol,
                         trade_type=close_trade_type,
@@ -595,11 +595,11 @@ class VCBMarketMonitor:
             if position == 1:
                 return_rate = (close_price - entry_price) / entry_price
                 pnl = self.trade_amount * return_rate * actual_leverage
-                close_trade_type = "卖"
+                close_trade_type = "做多平仓"
             else:
                 return_rate = (entry_price - close_price) / entry_price
                 pnl = self.trade_amount * return_rate * actual_leverage
-                close_trade_type = "买"
+                close_trade_type = "做空平仓"
             
             logger.info(f"🔴 {symbol} 平仓 [{reason}]: 入场={entry_price:.4f}, 平仓={close_price:.4f}, "
                        f"收益率={return_rate*100:.2f}%, 盈亏={pnl:.4f} USDT")

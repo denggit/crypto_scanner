@@ -127,9 +127,9 @@ class CompressionScanner:
                             new_compressions[symbol] = compression
                             logger.info(f"✅ 发现压缩: {symbol} (ATR比率={compression.atr_ratio:.4f})")
                         completed += 1
-                        
-                        # 每完成10%显示进度
-                        if completed % max(1, len(symbols) // 10) == 0:
+
+                        # 每完成20%显示进度
+                        if completed % max(1, len(symbols) // 20) == 0:
                             logger.info(f"扫描进度: {completed}/{len(symbols)} ({completed*100//len(symbols)}%)")
                     except Exception as e:
                         logger.warning(f"扫描 {symbol} 时出错: {e}")
@@ -204,13 +204,9 @@ class CompressionScanner:
                 currency=self.currency,
                 min_vol_ccy=self.min_vol_ccy,
                 use_cache=True,
-                # inst_type=self.inst_type
+                inst_type=self.inst_type
             )
 
-            if self.inst_type == "SWAP":
-                for i in range(len(symbols)):
-                    symbols[i] = symbols[i] + "-SWAP"
-            
             # 如果只做主流币，进行过滤
             if self.only_major_coins:
                 from strategies.strategy_6_vcb.methods.position_manager import MAJOR_COINS

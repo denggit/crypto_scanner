@@ -338,7 +338,17 @@ class BaseTrader(ABC):
         Execute trade based on action
         
         Args:
-            action: Trade action (LONG_OPEN, SHORT_OPEN, etc.)
+            action: Trade action, supported actions:
+                - LONG_OPEN: 开仓做多
+                - SHORT_OPEN: 开仓做空
+                - LONG_CLOSE: 平多仓
+                - SHORT_CLOSE: 平空仓
+                - LONG_CLOSE_SHORT_OPEN: 平多仓后开空仓
+                - SHORT_CLOSE_LONG_OPEN: 平空仓后开多仓
+                - LONG_CLOSE_TRAILING_STOP: 移动止损平多仓
+                - SHORT_CLOSE_TRAILING_STOP: 移动止损平空仓
+                - LONG_CLOSE_VOLATILITY: 波动率平多仓
+                - SHORT_CLOSE_VOLATILITY: 波动率平空仓
             symbol: Trading pair symbol
             price: Current price
             
@@ -432,6 +442,24 @@ class BaseTrader(ABC):
                     return True
                 else:
                     logger.error(f"❌ [真实交易] {symbol} 波动率平空失败")
+                    return False
+
+            elif action == "LONG_CLOSE":
+                order = self.execute_close_long(symbol, price)
+                if order:
+                    logger.info(f"✅ [真实交易] {symbol} 平多成功: 订单ID={order.ordId}")
+                    return True
+                else:
+                    logger.error(f"❌ [真实交易] {symbol} 平多失败")
+                    return False
+
+            elif action == "SHORT_CLOSE":
+                order = self.execute_close_short(symbol, price)
+                if order:
+                    logger.info(f"✅ [真实交易] {symbol} 平空成功: 订单ID={order.ordId}")
+                    return True
+                else:
+                    logger.error(f"❌ [真实交易] {symbol} 平空失败")
                     return False
 
         except Exception as e:
