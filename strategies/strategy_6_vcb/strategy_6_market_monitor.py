@@ -13,8 +13,9 @@ import os
 import sys
 import time
 import threading
+import csv
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -162,6 +163,69 @@ class VCBMarketMonitor:
         
         # 持仓管理（多币种）
         self.positions: Dict[str, Dict] = {}  # {symbol: {position, entry_price, ...}}
+        
+        # 交易记录文件
+        self.trading_record_file = None
+        self.trading_record_lock = threading.Lock()
+        self._init_trading_record_file()
+    
+    def _init_trading_record_file(self):
+        """初始化交易记录CSV文件"""
+        try:
+            # 创建交易记录目录
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            trading_records_dir = os.path.join(project_root, "trading_records", "strategy_6_vcb")
+            
+            if not os.path.exists(trading_records_dir):
+                os.makedirs(trading_records_dir)
+                logger.info(f"创建交易记录目录: {trading_records_dir}")
+            
+            # 生成文件名（启动日期时间）
+            start_time = datetime.now()
+            filename = start_time.strftime("%Y%m%d_%H%M%S.csv")
+            filepath = os.path.join(trading_records_dir, filename)
+            
+            self.trading_record_file = filepath
+            
+            # 创建CSV文件并写入表头
+            headers = ['时间', '币种', '交易类型', '成交额(USDT)', '杠杆倍数', '平仓盈亏(USDT)']
+            with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+            
+            logger.info(f"交易记录文件已创建: {filepath}")
+            
+        except Exception as e:
+            logger.error(f"初始化交易记录文件失败: {e}")
+            self.trading_record_file = None
+    
+    def _record_trade(self, symbol: str, trade_type: str, trade_amount: float, 
+                     leverage: int, pnl: Optional[float] = None):
+        """
+        记录交易到CSV文件
+        
+        Args:
+            symbol: 交易对符号
+            trade_type: 交易类型（"买" 或 "卖"）
+            trade_amount: 成交额（USDT）
+            leverage: 杠杆倍数（现货为1）
+            pnl: 平仓盈亏（USDT），开仓时为None
+        """
+        if not self.trading_record_file:
+            return
+        
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            pnl_str = f"{pnl:.4f}" if pnl is not None else ""
+            
+            with self.trading_record_lock:
+                with open(self.trading_record_file, 'a', newline='', encoding='utf-8-sig') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, symbol, trade_type, f"{trade_amount:.4f}", 
+                                    leverage, pnl_str])
+        
+        except Exception as e:
+            logger.error(f"记录交易失败: {e}")
     
     def _on_breakout(self, symbol: str, signal: int, details: Dict):
         """
@@ -198,12 +262,17 @@ class VCBMarketMonitor:
         """
         try:
             action = "LONG_OPEN" if signal == 1 else "SHORT_OPEN"
+            trade_type = "买" if signal == 1 else "卖"
+            
+            # 确定杠杆倍数（现货为1，杠杆模式使用配置的杠杆）
+            actual_leverage = 1 if self.trade_mode == 1 else self.leverage
             
             # 记录模拟交易
             logger.info(f"[模拟交易] {symbol} {action}: 价格={price:.4f}")
             
             # 更新持仓
             if symbol not in self.positions:
+                # 新开仓
                 self.positions[symbol] = {
                     'position': signal,
                     'entry_price': price,
@@ -211,6 +280,15 @@ class VCBMarketMonitor:
                     'highest_price': price if signal == 1 else price,
                     'lowest_price': price if signal == -1 else price
                 }
+                
+                # 记录开仓交易
+                self._record_trade(
+                    symbol=symbol,
+                    trade_type=trade_type,
+                    trade_amount=self.trade_amount,
+                    leverage=actual_leverage,
+                    pnl=None  # 开仓时无盈亏
+                )
             else:
                 # 如果已有持仓，先平仓再开新仓
                 old_position = self.positions[symbol]['position']
@@ -220,10 +298,22 @@ class VCBMarketMonitor:
                     # 计算平仓收益
                     if old_position == 1:
                         return_rate = (price - old_entry_price) / old_entry_price
+                        pnl = self.trade_amount * return_rate * actual_leverage
                     else:
                         return_rate = (old_entry_price - price) / old_entry_price
+                        pnl = self.trade_amount * return_rate * actual_leverage
                     
-                    logger.info(f"[模拟交易] {symbol} 平仓: 收益率={return_rate*100:.2f}%")
+                    logger.info(f"[模拟交易] {symbol} 平仓: 收益率={return_rate*100:.2f}%, 盈亏={pnl:.4f} USDT")
+                    
+                    # 记录平仓交易
+                    close_trade_type = "卖" if old_position == 1 else "买"
+                    self._record_trade(
+                        symbol=symbol,
+                        trade_type=close_trade_type,
+                        trade_amount=self.trade_amount,
+                        leverage=actual_leverage,
+                        pnl=pnl
+                    )
                 
                 # 更新为新持仓
                 self.positions[symbol] = {
@@ -233,6 +323,15 @@ class VCBMarketMonitor:
                     'highest_price': price if signal == 1 else price,
                     'lowest_price': price if signal == -1 else price
                 }
+                
+                # 记录新开仓交易
+                self._record_trade(
+                    symbol=symbol,
+                    trade_type=trade_type,
+                    trade_amount=self.trade_amount,
+                    leverage=actual_leverage,
+                    pnl=None  # 开仓时无盈亏
+                )
             
             # 真实交易
             if self.trade and self.trader:
@@ -344,6 +443,8 @@ class VCBMarketMonitor:
             logger.info(f"  - 每次交易金额: {self.trade_amount} USDT")
             if self.trade_mode in [2, 3]:
                 logger.info(f"  - 杠杆倍数: {self.leverage}x")
+        if self.trading_record_file:
+            logger.info(f"交易记录文件: {self.trading_record_file}")
         logger.info("=" * 60)
         
         # 启动扫描线程（生产者）
