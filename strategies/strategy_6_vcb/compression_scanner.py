@@ -129,7 +129,7 @@ class CompressionScanner:
                         completed += 1
 
                         # 每完成20%显示进度
-                        if completed % max(1, len(symbols) // 20) == 0:
+                        if completed % max(1, len(symbols) // 5) == 0:
                             logger.info(f"扫描进度: {completed}/{len(symbols)} ({completed*100//len(symbols)}%)")
                     except Exception as e:
                         logger.warning(f"扫描 {symbol} 时出错: {e}")

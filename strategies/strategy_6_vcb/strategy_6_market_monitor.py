@@ -228,7 +228,7 @@ class VCBMarketMonitor:
             self.trading_record_file = filepath
             
             # 创建CSV文件并写入表头
-            headers = ['时间', '币种', '交易类型', '成交额(USDT)', '杠杆倍数', '平仓盈亏(USDT)']
+            headers = ['时间', '币种', '交易类型', '成交价格', '成交额(USDT)', '杠杆倍数', '平仓盈亏(USDT)']
             with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
                 writer.writerow(headers)
@@ -239,7 +239,7 @@ class VCBMarketMonitor:
             logger.error(f"初始化交易记录文件失败: {e}")
             self.trading_record_file = None
     
-    def _record_trade(self, symbol: str, trade_type: str, trade_amount: float, 
+    def _record_trade(self, symbol: str, trade_type: str, price: float, trade_amount: float, 
                      leverage: int, pnl: Optional[float] = None):
         """
         记录交易到CSV文件
@@ -247,6 +247,7 @@ class VCBMarketMonitor:
         Args:
             symbol: 交易对符号
             trade_type: 交易类型（"开仓做多"、"开仓做空"、"做多平仓"、"做空平仓"）
+            price: 成交价格
             trade_amount: 成交额（USDT）
             leverage: 杠杆倍数（现货为1）
             pnl: 平仓盈亏（USDT），开仓时为None
@@ -261,8 +262,8 @@ class VCBMarketMonitor:
             with self.trading_record_lock:
                 with open(self.trading_record_file, 'a', newline='', encoding='utf-8-sig') as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, symbol, trade_type, f"{trade_amount:.4f}", 
-                                    leverage, pnl_str])
+                    writer.writerow([timestamp, symbol, trade_type, f"{price:.8f}", 
+                                    f"{trade_amount:.4f}", leverage, pnl_str])
         
         except Exception as e:
             logger.error(f"记录交易失败: {e}")
@@ -363,6 +364,7 @@ class VCBMarketMonitor:
                 self._record_trade(
                     symbol=symbol,
                     trade_type=trade_type,
+                    price=price,
                     trade_amount=self.trade_amount,
                     leverage=actual_leverage,
                     pnl=None  # 开仓时无盈亏
@@ -388,6 +390,7 @@ class VCBMarketMonitor:
                     self._record_trade(
                         symbol=symbol,
                         trade_type=close_trade_type,
+                        price=price,
                         trade_amount=self.trade_amount,
                         leverage=actual_leverage,
                         pnl=pnl
@@ -441,6 +444,7 @@ class VCBMarketMonitor:
                 self._record_trade(
                     symbol=symbol,
                     trade_type=trade_type,
+                    price=price,
                     trade_amount=self.trade_amount,
                     leverage=actual_leverage,
                     pnl=None  # 开仓时无盈亏
@@ -608,6 +612,7 @@ class VCBMarketMonitor:
             self._record_trade(
                 symbol=symbol,
                 trade_type=close_trade_type,
+                price=close_price,
                 trade_amount=self.trade_amount,
                 leverage=actual_leverage,
                 pnl=pnl

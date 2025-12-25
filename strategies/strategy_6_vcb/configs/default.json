@@ -2,7 +2,7 @@
   "min_vol_ccy": 100000000,
   "currency": "USDT",
   "inst_type": "SWAP",
-  "scan_interval_minutes": 1,
+  "scan_interval_minutes": 5,
   "max_workers": 10,
   "only_major_coins": false,
   "bar": "1m",
@@ -17,7 +17,7 @@
   "ttl_bars": 30,
   "trailing_stop_pct": 1.0,
   "stop_loss_atr_multiplier": 0.8,
-  "take_profit_mode": "r_multiple",
+  "take_profit_mode": "atr_trailing",
   "take_profit_r": 2.0,
   "take_profit_r_major": 1.5,
   "take_profit_r_alt": 2.5,
@@ -25,7 +25,7 @@
   "failure_exit_atr_threshold": 1.2,
   "break_even_r": 1.0,
   "trade": true,
-  "trade_amount": 2.0,
+  "trade_amount": 20.0,
   "trade_mode": 3,
   "leverage": 10
 }
