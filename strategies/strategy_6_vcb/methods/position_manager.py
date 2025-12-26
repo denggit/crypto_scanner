@@ -130,17 +130,17 @@ class PositionManager:
             current_atr = atr_mid.iloc[-1]
             atr_stop = current_atr * self.stop_loss_atr_multiplier
             
-            # 计算基于压缩区间的止损
+            # 计算基于压缩区间的止损（使用压缩区间本体，而非BB边缘）
             if compression_event:
                 if position == 1:
-                    # 做多：止损在压缩区间下轨
-                    compression_stop = compression_event.bb_lower
-                    # 取较大值（更宽松的止损）
+                    # 做多：止损在压缩区间最低价
+                    compression_stop = compression_event.compression_low
+                    # 取较大值（更宽松的止损），ATR作为兜底
                     stop_loss = max(compression_stop, entry_price - atr_stop)
                 else:
-                    # 做空：止损在压缩区间上轨
-                    compression_stop = compression_event.bb_upper
-                    # 取较小值（更宽松的止损）
+                    # 做空：止损在压缩区间最高价
+                    compression_stop = compression_event.compression_high
+                    # 取较小值（更宽松的止损），ATR作为兜底
                     stop_loss = min(compression_stop, entry_price + atr_stop)
             else:
                 # 没有压缩事件，使用ATR止损
@@ -251,6 +251,94 @@ class PositionManager:
                 return entry_price + risk * self.take_profit_r
             else:
                 return entry_price - risk * self.take_profit_r
+    
+    def check_structure_validation(self, symbol: str, current_price: float, position: int,
+                                  entry_time: datetime, entry_bar: str,
+                                  compression_event=None, entry_atr_short: float = None) -> Tuple[bool, str]:
+        """
+        检查结构验证（建仓后的结构验证机制）
+        
+        根据 README：
+        - 突破后最多允许 2 根 K 线的验证期
+        - 验证期内判断突破结构是否被否定
+        - 结构失败判定：价格回到压缩区间内部（compression_low - 0.2 × ATR(10)）
+        - 第 2 根不立即止损，第 3 根仍失败 → 平仓
+        
+        Args:
+            symbol: 交易对符号
+            current_price: 当前价格
+            position: 持仓方向（1=做多, -1=做空）
+            entry_time: 入场时间
+            entry_bar: K线周期
+            compression_event: 压缩事件（可选）
+            entry_atr_short: 入场时的ATR(10)值（可选）
+            
+        Returns:
+            Tuple[bool, str]: (是否触发平仓, 触发原因)
+        """
+        try:
+            # 计算从入场到现在经过了多少根K线
+            time_diff = datetime.now() - entry_time
+            
+            if entry_bar == '1m':
+                bars_elapsed = int(time_diff.total_seconds() / 60)
+            elif entry_bar == '5m':
+                bars_elapsed = int(time_diff.total_seconds() / 300)
+            else:
+                bars_elapsed = int(time_diff.total_seconds() / 60)  # 默认1m
+            
+            # 验证期最多 2 根 K 线
+            if bars_elapsed > 2:
+                return False, ""  # 超过验证期，不再检查结构验证
+            
+            # 如果没有压缩事件或ATR，无法进行结构验证
+            if not compression_event or entry_atr_short is None or entry_atr_short <= 0:
+                return False, ""
+            
+            # 获取当前ATR(10)用于计算
+            try:
+                limit = 15
+                df = self.market_data_retriever.get_kline(symbol, entry_bar, limit)
+                if df is None or len(df) < 10:
+                    return False, ""
+                
+                from tools.technical_indicators import atr
+                atr_short = atr(df, 10)
+                if len(atr_short) < 1 or pd.isna(atr_short.iloc[-1]):
+                    current_atr_short = entry_atr_short
+                else:
+                    current_atr_short = float(atr_short.iloc[-1])
+            except:
+                current_atr_short = entry_atr_short
+            
+            # 结构失败判定：价格回到压缩区间内部
+            compression_low = compression_event.compression_low
+            compression_high = compression_event.compression_high
+            
+            if position == 1:
+                # 做多：如果价格回到压缩区间内部（compression_low - 0.2 × ATR(10)）
+                structure_fail_threshold = compression_low - 0.2 * current_atr_short
+                if current_price < structure_fail_threshold:
+                    # 第 2 根不立即止损，第 3 根仍失败才平仓
+                    if bars_elapsed >= 2:
+                        return True, "STRUCTURE_VALIDATION_FAIL"
+                    # 第 1 根失败，记录但不平仓
+                    return False, ""
+            else:
+                # 做空：如果价格回到压缩区间内部（compression_high + 0.2 × ATR(10)）
+                structure_fail_threshold = compression_high + 0.2 * current_atr_short
+                if current_price > structure_fail_threshold:
+                    # 第 2 根不立即止损，第 3 根仍失败才平仓
+                    if bars_elapsed >= 2:
+                        return True, "STRUCTURE_VALIDATION_FAIL"
+                    # 第 1 根失败，记录但不平仓
+                    return False, ""
+            
+            return False, ""
+            
+        except Exception as e:
+            logger.error(f"检查结构验证时出错 {symbol}: {e}")
+            return False, ""
     
     def check_hard_stop_loss(self, symbol: str, current_price: float, 
                             position: int, stop_loss: float) -> Tuple[bool, str]:

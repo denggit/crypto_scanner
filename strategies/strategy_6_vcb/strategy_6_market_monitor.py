@@ -228,7 +228,7 @@ class VCBMarketMonitor:
             self.trading_record_file = filepath
             
             # 创建CSV文件并写入表头
-            headers = ['时间', '币种', '交易类型', '成交价格', '成交额(USDT)', '杠杆倍数', '平仓盈亏(USDT)']
+            headers = ['时间', '币种', '交易类型', '成交价格', '成交额(USDT)', '手续费(USDT)', '杠杆倍数', '平仓盈亏(USDT)']
             with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
                 writer.writerow(headers)
@@ -239,32 +239,33 @@ class VCBMarketMonitor:
             logger.error(f"初始化交易记录文件失败: {e}")
             self.trading_record_file = None
     
-    def _record_trade(self, symbol: str, trade_type: str, price: float, trade_amount: float, 
-                     leverage: int, pnl: Optional[float] = None):
+    def _record_trade(self, symbol: str, trade_type: str, price: float, trade_amount: float,
+                     fee: float, leverage: int, pnl: Optional[float] = None):
         """
         记录交易到CSV文件
-        
+
         Args:
             symbol: 交易对符号
             trade_type: 交易类型（"开仓做多"、"开仓做空"、"做多平仓"、"做空平仓"）
             price: 成交价格
             trade_amount: 成交额（USDT）
+            fee: 手续费（USDT）
             leverage: 杠杆倍数（现货为1）
             pnl: 平仓盈亏（USDT），开仓时为None
         """
         if not self.trading_record_file:
             return
-        
+
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             pnl_str = f"{pnl:.4f}" if pnl is not None else ""
-            
+
             with self.trading_record_lock:
                 with open(self.trading_record_file, 'a', newline='', encoding='utf-8-sig') as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, symbol, trade_type, f"{price:.8f}", 
-                                    f"{trade_amount:.4f}", leverage, pnl_str])
-        
+                    writer.writerow([timestamp, symbol, trade_type, f"{price:.8f}",
+                                    f"{trade_amount:.4f}", f"{fee:.4f}", leverage, pnl_str])
+
         except Exception as e:
             logger.error(f"记录交易失败: {e}")
     
@@ -330,8 +331,9 @@ class VCBMarketMonitor:
                 compression_event=compression_event
             )
             
-            # 获取入场时的ATR（用于失败退出检查）
+            # 获取入场时的ATR（用于失败退出检查和结构验证）
             entry_atr = None
+            entry_atr_short = None
             try:
                 limit = self.atr_mid_period + 5
                 df = self.market_data_retriever.get_kline(symbol, self.bar, limit)
@@ -339,7 +341,11 @@ class VCBMarketMonitor:
                     from tools.technical_indicators import atr
                     atr_short = atr(df, 10)
                     if len(atr_short) > 0:
-                        entry_atr = float(atr_short.iloc[-1])
+                        entry_atr_short = float(atr_short.iloc[-1])
+                    # 用于失败退出检查的ATR（中期）
+                    atr_mid = atr(df, self.atr_mid_period)
+                    if len(atr_mid) > 0:
+                        entry_atr = float(atr_mid.iloc[-1])
             except:
                 pass
             
@@ -354,18 +360,25 @@ class VCBMarketMonitor:
                     'lowest_price': price if signal == -1 else price,
                     'stop_loss': stop_loss,
                     'take_profit': take_profit,
-                    'entry_atr': entry_atr,
+                    'entry_atr': entry_atr,  # ATR(60) 用于失败退出
+                    'entry_atr_short': entry_atr_short,  # ATR(10) 用于结构验证
                     'compression_event': compression_event
                 }
                 
                 logger.info(f"📊 {symbol} 开仓: 入场={price:.4f}, 止损={stop_loss:.4f}, 止盈={take_profit:.4f}")
                 
+                # 计算手续费（成交额的0.05%）
+                # 成交额 = 交易金额 × 杠杆倍数（名义价值）
+                nominal_amount = self.trade_amount * actual_leverage
+                fee = nominal_amount * 0.0005  # 0.05%
+
                 # 记录开仓交易
                 self._record_trade(
                     symbol=symbol,
                     trade_type=trade_type,
                     price=price,
-                    trade_amount=self.trade_amount,
+                    trade_amount=nominal_amount,
+                    fee=fee,
                     leverage=actual_leverage,
                     pnl=None  # 开仓时无盈亏
                 )
@@ -384,14 +397,27 @@ class VCBMarketMonitor:
                         pnl = self.trade_amount * return_rate * actual_leverage
                     
                     logger.info(f"[模拟交易] {symbol} 平仓: 收益率={return_rate*100:.2f}%, 盈亏={pnl:.4f} USDT")
-                    
+
+                    # 计算平仓成交额和手续费
+                    # 平仓成交额 = 开仓名义价值 × 价格变化比率
+                    open_nominal_amount = self.trade_amount * actual_leverage
+                    if old_position == 1:
+                        # 做多平仓：成交额随价格上涨而增加
+                        close_nominal_amount = open_nominal_amount * (price / old_entry_price)
+                    else:
+                        # 做空平仓：成交额随价格下跌而减少
+                        close_nominal_amount = open_nominal_amount * (old_entry_price / price)
+
+                    close_fee = close_nominal_amount * 0.0005  # 0.05%
+
                     # 记录平仓交易
                     close_trade_type = "做多平仓" if old_position == 1 else "做空平仓"
                     self._record_trade(
                         symbol=symbol,
                         trade_type=close_trade_type,
                         price=price,
-                        trade_amount=self.trade_amount,
+                        trade_amount=close_nominal_amount,
+                        fee=close_fee,
                         leverage=actual_leverage,
                         pnl=pnl
                     )
@@ -414,6 +440,7 @@ class VCBMarketMonitor:
                 
                 # 获取入场时的ATR
                 entry_atr = None
+                entry_atr_short = None
                 try:
                     limit = self.atr_mid_period + 5
                     df = self.market_data_retriever.get_kline(symbol, self.bar, limit)
@@ -421,7 +448,11 @@ class VCBMarketMonitor:
                         from tools.technical_indicators import atr
                         atr_short = atr(df, 10)
                         if len(atr_short) > 0:
-                            entry_atr = float(atr_short.iloc[-1])
+                            entry_atr_short = float(atr_short.iloc[-1])
+                        # 用于失败退出检查的ATR（中期）
+                        atr_mid = atr(df, self.atr_mid_period)
+                        if len(atr_mid) > 0:
+                            entry_atr = float(atr_mid.iloc[-1])
                 except:
                     pass
                 
@@ -434,18 +465,24 @@ class VCBMarketMonitor:
                     'lowest_price': price if signal == -1 else price,
                     'stop_loss': new_stop_loss,
                     'take_profit': new_take_profit,
-                    'entry_atr': entry_atr,
+                    'entry_atr': entry_atr,  # ATR(60) 用于失败退出
+                    'entry_atr_short': entry_atr_short,  # ATR(10) 用于结构验证
                     'compression_event': compression_event
                 }
                 
                 logger.info(f"📊 {symbol} 换仓: 入场={price:.4f}, 止损={new_stop_loss:.4f}, 止盈={new_take_profit:.4f}")
-                
+
+                # 计算手续费（成交额的0.05%）
+                nominal_amount = self.trade_amount * actual_leverage
+                fee = nominal_amount * 0.0005  # 0.05%
+
                 # 记录新开仓交易
                 self._record_trade(
                     symbol=symbol,
                     trade_type=trade_type,
                     price=price,
-                    trade_amount=self.trade_amount,
+                    trade_amount=nominal_amount,
+                    fee=fee,
                     leverage=actual_leverage,
                     pnl=None  # 开仓时无盈亏
                 )
@@ -490,6 +527,7 @@ class VCBMarketMonitor:
                 stop_loss = position_info.get('stop_loss', 0)
                 take_profit = position_info.get('take_profit', 0)
                 entry_atr = position_info.get('entry_atr')
+                entry_atr_short = position_info.get('entry_atr_short')
                 compression_event = position_info.get('compression_event')
                 
                 if entry_price <= 0:
@@ -508,17 +546,46 @@ class VCBMarketMonitor:
                 else:
                     position_info['lowest_price'] = min(position_info.get('lowest_price', current_price), current_price)
                 
-                # 1. 检查硬止损
-                should_close, reason = self.position_manager.check_hard_stop_loss(
+                # 计算从入场到现在经过了多少根K线（用于判断是否在验证期内）
+                if entry_time:
+                    time_diff = datetime.now() - entry_time
+                    if self.bar == '1m':
+                        bars_elapsed = int(time_diff.total_seconds() / 60)
+                    elif self.bar == '5m':
+                        bars_elapsed = int(time_diff.total_seconds() / 300)
+                    else:
+                        bars_elapsed = int(time_diff.total_seconds() / 60)  # 默认1m
+                else:
+                    bars_elapsed = 999  # 如果没有入场时间，假设不在验证期内
+                
+                # 0. 检查结构验证（验证期内优先检查，避免过早止损）
+                should_close, reason = self.position_manager.check_structure_validation(
                     symbol=symbol,
                     current_price=current_price,
                     position=position,
-                    stop_loss=stop_loss
+                    entry_time=entry_time,
+                    entry_bar=self.bar,
+                    compression_event=compression_event,
+                    entry_atr_short=entry_atr_short
                 )
                 
                 if should_close:
                     positions_to_close.append((symbol, reason, current_price))
                     continue
+                
+                # 1. 检查硬止损（验证期外才检查，避免过早止损）
+                # 验证期内（前2根K线）不触发硬止损，只检查结构验证
+                if bars_elapsed > 2:
+                    should_close, reason = self.position_manager.check_hard_stop_loss(
+                        symbol=symbol,
+                        current_price=current_price,
+                        position=position,
+                        stop_loss=stop_loss
+                    )
+                    
+                    if should_close:
+                        positions_to_close.append((symbol, reason, current_price))
+                        continue
                 
                 # 2. 检查Break-even（更新止损）
                 should_update_sl, new_stop_loss = self.position_manager.check_break_even(
@@ -607,13 +674,27 @@ class VCBMarketMonitor:
             
             logger.info(f"🔴 {symbol} 平仓 [{reason}]: 入场={entry_price:.4f}, 平仓={close_price:.4f}, "
                        f"收益率={return_rate*100:.2f}%, 盈亏={pnl:.4f} USDT")
-            
+
+            # 计算平仓成交额和手续费
+            # 开仓名义价值
+            open_nominal_amount = self.trade_amount * actual_leverage
+            # 平仓名义价值（基于价格变化）
+            if position == 1:
+                # 做多平仓：成交额随价格上涨而增加
+                close_nominal_amount = open_nominal_amount * (close_price / entry_price)
+            else:
+                # 做空平仓：成交额随价格下跌而减少
+                close_nominal_amount = open_nominal_amount * (entry_price / close_price)
+
+            close_fee = close_nominal_amount * 0.0005  # 0.05%
+
             # 记录平仓交易
             self._record_trade(
                 symbol=symbol,
                 trade_type=close_trade_type,
                 price=close_price,
-                trade_amount=self.trade_amount,
+                trade_amount=close_nominal_amount,
+                fee=close_fee,
                 leverage=actual_leverage,
                 pnl=pnl
             )

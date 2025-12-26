@@ -27,7 +27,8 @@ class CompressionEvent:
     
     def __init__(self, symbol: str, start_time: datetime, atr_ratio: float, 
                  bb_width: float, bb_upper: float, bb_lower: float, 
-                 bb_middle: float, ttl_bars: int = 30):
+                 bb_middle: float, compression_low: float = None,
+                 compression_high: float = None, ttl_bars: int = 30):
         """
         初始化压缩事件
         
@@ -39,6 +40,8 @@ class CompressionEvent:
             bb_upper: 布林带上轨
             bb_lower: 布林带下轨
             bb_middle: 布林带中轨
+            compression_low: 压缩区间最低价（用于结构验证）
+            compression_high: 压缩区间最高价（用于结构验证）
             ttl_bars: TTL（存活时间，以K线数量为单位）
         """
         self.symbol = symbol
@@ -48,6 +51,8 @@ class CompressionEvent:
         self.bb_upper = bb_upper
         self.bb_lower = bb_lower
         self.bb_middle = bb_middle
+        self.compression_low = compression_low if compression_low is not None else bb_lower
+        self.compression_high = compression_high if compression_high is not None else bb_upper
         self.ttl_bars = ttl_bars
         self.bar_count = 0  # 已存活的K线数量
     
@@ -181,6 +186,11 @@ class VCBStrategy:
             if bb_width >= bb_width_ratio * bb_width_60_mean:
                 return None
             
+            # 计算压缩区间的高低点（使用最近20根K线的最高价和最低价）
+            compression_period = min(20, len(highs))
+            compression_high = float(highs.iloc[-compression_period:].max())
+            compression_low = float(lows.iloc[-compression_period:].min())
+            
             # 如果该币种已有压缩事件，检查是否需要更新
             if symbol in self.compression_pool:
                 existing_event = self.compression_pool[symbol]
@@ -195,6 +205,8 @@ class VCBStrategy:
                         bb_upper=current_bb_upper,
                         bb_lower=current_bb_lower,
                         bb_middle=current_bb_middle,
+                        compression_low=compression_low,
+                        compression_high=compression_high,
                         ttl_bars=ttl_bars
                     )
                     return self.compression_pool[symbol]
@@ -211,6 +223,8 @@ class VCBStrategy:
                 bb_upper=current_bb_upper,
                 bb_lower=current_bb_lower,
                 bb_middle=current_bb_middle,
+                compression_low=compression_low,
+                compression_high=compression_high,
                 ttl_bars=ttl_bars
             )
             
@@ -294,7 +308,8 @@ class VCBStrategy:
                 'avg_volume': float(avg_volume),
                 'volume_expansion': volume_expansion,
                 'atr_ratio': compression_event.atr_ratio,
-                'bb_width': compression_event.bb_width
+                'bb_width': compression_event.bb_width,
+                'compression_event': compression_event  # 添加压缩事件，用于结构验证和止损计算
             }
             
             # 做多突破：价格突破上轨且成交量放大
@@ -313,7 +328,7 @@ class VCBStrategy:
                 logger.info(f"{symbol} 检测到做空突破: 价格={current_close:.4f}, 下轨={bb_lower:.4f}, "
                           f"成交量比率={current_volume/avg_volume:.2f}")
             
-            # 如果检测到突破，从压缩池中移除该事件
+            # 如果检测到突破，从压缩池中移除该事件（但保留在details中供后续使用）
             if signal != 0:
                 del self.compression_pool[symbol]
                 logger.info(f"{symbol} 突破后已从压缩池移除")
