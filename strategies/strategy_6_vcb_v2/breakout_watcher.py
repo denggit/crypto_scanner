@@ -51,9 +51,10 @@ class BreakoutWatcher:
 
     def watch_compression_pool(self, volume_period: int = 20,
                                volume_multiplier: float = 1.2,  # v2.1从1.0提高到1.2
+                               breakout_threshold: float = 0.002,  # v2.1从0.01(1%)降低到0.002(0.2%)
                                breakout_body_atr_multiplier: float = 0.4,
                                breakout_shadow_ratio: float = 0.5,
-                               breakout_volume_min_multiplier: float = 1.5,
+                               breakout_volume_min_multiplier: float = 1.2,  # v2.1从1.5降低到1.2
                                breakout_new_high_low_lookback: int = 10) -> List[Dict]:
         """
         监控压缩池中的所有币种，检测突破
@@ -84,6 +85,7 @@ class BreakoutWatcher:
                         symbol=symbol,
                         volume_period=volume_period,
                         volume_multiplier=volume_multiplier,
+                        breakout_threshold=breakout_threshold,  # v2.1新增
                         breakout_body_atr_multiplier=breakout_body_atr_multiplier,
                         breakout_shadow_ratio=breakout_shadow_ratio,
                         breakout_volume_min_multiplier=breakout_volume_min_multiplier,

@@ -794,6 +794,7 @@ class VCBStrategy:
 
     def detect_breakout(self, symbol: str,
                         volume_period: int = 20, volume_multiplier: float = 1.2,
+                        breakout_threshold: float = 0.002,  # v2.1从0.01(1%)降低到0.002(0.2%)
                         breakout_body_atr_multiplier: float = 0.4,
                         breakout_shadow_ratio: float = 0.5,
                         breakout_volume_min_multiplier: float = 1.2,
@@ -809,10 +810,11 @@ class VCBStrategy:
         Args:
             symbol: 交易对符号
             volume_period: 成交量均线周期（默认20）
-            volume_multiplier: 成交量放大倍数（默认1.0，即只要大于均线即可）
+            volume_multiplier: 成交量放大倍数（默认1.2，v2.1从1.5降低）
+            breakout_threshold: 突破幅度阈值（默认0.002即0.2%，v2.1从0.01即1%降低）
             breakout_body_atr_multiplier: 突破实体ATR倍数（默认0.4，实体≥此值×ATR(14)）
-            breakout_shadow_ratio: 突破影线比率（默认0.5，影线<此值×实体）
-            breakout_volume_min_multiplier: 突破成交量最小倍数（默认1.5，成交量>此值×近期最低成交量）
+            breakout_shadow_ratio: 突破影线比率（默认0.5即50%，v2.1从0.3即30%放宽）
+            breakout_volume_min_multiplier: 突破成交量最小倍数（默认1.2，v2.1从1.5降低）
             breakout_new_high_low_lookback: 创新高/新低回看周期（默认10根K线）
 
         Returns:
@@ -861,15 +863,20 @@ class VCBStrategy:
             # v2.1修改：成交量需要≥volume_multiplier×20均量（v2.1从1.5倍降低到1.2倍，允许温和放量启动）
             volume_expansion = current_volume >= volume_multiplier * avg_volume
 
-            # v2修改：使用压缩事件的突破水平而不是布林带边界
-            # 如果压缩事件中没有突破水平，使用默认计算（向后兼容）
+            # v2.1修改：使用压缩事件的突破水平而不是布林带边界
+            # 如果压缩事件中没有突破水平，使用配置的breakout_threshold计算（v2.1从1%降低到0.2%）
             if compression_event.breakout_levels:
-                breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01)
-                breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99)
+                breakout_up = compression_event.breakout_levels.get('up')
+                breakout_down = compression_event.breakout_levels.get('down')
+                # 如果breakout_levels存在但值为None，使用配置的threshold计算
+                if breakout_up is None:
+                    breakout_up = compression_event.compression_high * (1 + breakout_threshold)
+                if breakout_down is None:
+                    breakout_down = compression_event.compression_low * (1 - breakout_threshold)
             else:
-                # 向后兼容：如果没有配置，使用默认1%
-                breakout_up = compression_event.compression_high * 1.01
-                breakout_down = compression_event.compression_low * 0.99
+                # 向后兼容：如果没有配置，使用配置的breakout_threshold（v2.1从1%降低到0.2%）
+                breakout_up = compression_event.compression_high * (1 + breakout_threshold)
+                breakout_down = compression_event.compression_low * (1 - breakout_threshold)
 
             # 检测突破
             signal = 0

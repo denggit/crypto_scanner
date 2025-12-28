@@ -408,8 +408,17 @@ class VCBMarketMonitor:
             if symbol not in self.positions:
                 # 新开仓
                 # v2.1新增：记录突破边界用于延迟确认
-                breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01) if compression_event else None
-                breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99) if compression_event else None
+                if compression_event and compression_event.breakout_levels:
+                    breakout_up = compression_event.breakout_levels.get('up')
+                    breakout_down = compression_event.breakout_levels.get('down')
+                    # 如果breakout_levels存在但值为None，使用配置的threshold计算
+                    if breakout_up is None and compression_event.compression_high:
+                        breakout_up = compression_event.compression_high * (1 + self.breakout_threshold)
+                    if breakout_down is None and compression_event.compression_low:
+                        breakout_down = compression_event.compression_low * (1 - self.breakout_threshold)
+                else:
+                    breakout_up = None
+                    breakout_down = None
                 entry_volume = details.get('current_volume', 0)  # v2.1新增：记录入场时的成交量
                 
                 self.positions[symbol] = {
@@ -523,8 +532,17 @@ class VCBMarketMonitor:
 
                 # 更新为新持仓
                 # v2.1新增：记录突破边界用于延迟确认
-                breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01) if compression_event else None
-                breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99) if compression_event else None
+                if compression_event and compression_event.breakout_levels:
+                    breakout_up = compression_event.breakout_levels.get('up')
+                    breakout_down = compression_event.breakout_levels.get('down')
+                    # 如果breakout_levels存在但值为None，使用配置的threshold计算
+                    if breakout_up is None and compression_event.compression_high:
+                        breakout_up = compression_event.compression_high * (1 + self.breakout_threshold)
+                    if breakout_down is None and compression_event.compression_low:
+                        breakout_down = compression_event.compression_low * (1 - self.breakout_threshold)
+                else:
+                    breakout_up = None
+                    breakout_down = None
                 entry_volume = details.get('current_volume', 0)  # v2.1新增：记录入场时的成交量
                 
                 self.positions[symbol] = {
@@ -880,6 +898,7 @@ class VCBMarketMonitor:
                 breakouts = self.watcher.watch_compression_pool(
                     volume_period=self.volume_period,
                     volume_multiplier=self.volume_multiplier,
+                    breakout_threshold=self.breakout_threshold,  # v2.1新增
                     breakout_body_atr_multiplier=self.breakout_body_atr_multiplier,
                     breakout_shadow_ratio=self.breakout_shadow_ratio,
                     breakout_volume_min_multiplier=self.breakout_volume_min_multiplier,
