@@ -125,7 +125,12 @@ class VCBStrategy:
         self.compression_pool: Dict[str, CompressionEvent] = {}
 
     def _calculate_compression_score(self, df, atr_short, atr_mid, bb_width,
-                                     bb_width_history, closes, volumes, highs, lows) -> dict:
+                                     bb_width_history, closes, volumes, highs, lows,
+                                     score_weight_atr: float = 0.3,
+                                     score_weight_duration: float = 0.25,
+                                     score_weight_volume: float = 0.2,
+                                     score_weight_range: float = 0.15,
+                                     score_weight_ma: float = 0.1) -> dict:
         """
         计算压缩评分（v2新增）
 
@@ -236,13 +241,13 @@ class VCBStrategy:
             else:
                 ma_score = 0
 
-            # 计算加权总分
+            # 计算加权总分（使用配置的权重）
             total_score = (
-                    atr_score * 0.3 +
-                    duration_score * 0.25 +
-                    volume_score * 0.2 +
-                    range_score * 0.15 +
-                    ma_score * 0.1
+                    atr_score * score_weight_atr +
+                    duration_score * score_weight_duration +
+                    volume_score * score_weight_volume +
+                    range_score * score_weight_range +
+                    ma_score * score_weight_ma
             )
 
             return {
@@ -267,7 +272,10 @@ class VCBStrategy:
                 'atr_ratio': 1.0
             }
 
-    def _validate_15m_compression(self, df_15m: pd.DataFrame) -> Tuple[bool, dict]:
+    def _validate_15m_compression(self, df_15m: pd.DataFrame,
+                                  price_deviation_threshold: float = 2.0,
+                                  atr_relative_threshold: float = 1.5,
+                                  amplitude_ratio_threshold: float = 0.4) -> Tuple[bool, dict]:
         """
         15分钟周期压缩验证（根据白皮书附录）
 
@@ -300,8 +308,8 @@ class VCBStrategy:
             # 价格偏离度 = abs(收盘价 - MA20) / MA20 * 100
             price_deviation = abs(current_close - current_ma20) / current_ma20 * 100 if current_ma20 != 0 else 100
 
-            # 趋势过滤条件：价格偏离度 < 2%
-            trend_too_strong = price_deviation > 2.0
+            # 趋势过滤条件：价格偏离度 < threshold
+            trend_too_strong = price_deviation > price_deviation_threshold
 
             # 2. 波动率背景确认
             # 计算ATR(14) - 最近3.5小时ATR
@@ -313,8 +321,8 @@ class VCBStrategy:
             current_atr_14 = atr_14_15m.iloc[-1]
             atr_relative_level = current_atr_14 / current_close * 100 if current_close != 0 else 100
 
-            # 波动率过高：ATR相对水平 > 1.5%
-            volatility_too_high = atr_relative_level > 1.5
+            # 波动率过高：ATR相对水平 > threshold
+            volatility_too_high = atr_relative_level > atr_relative_threshold
 
             # 3. 价格结构确认
             # 最近5根15分钟K线（75分钟）的最大振幅
@@ -332,8 +340,8 @@ class VCBStrategy:
             # 振幅比率 = 75分钟振幅 / 5小时振幅
             amplitude_ratio = amplitude_75min / amplitude_5h if amplitude_5h != 0 else 1.0
 
-            # 结构支持压缩：振幅比率 < 0.4
-            structure_supports_compression = amplitude_ratio < 0.4
+            # 结构支持压缩：振幅比率 < threshold
+            structure_supports_compression = amplitude_ratio < amplitude_ratio_threshold
 
             # 验证条件（全部需要满足）
             validation_passed = (not trend_too_strong) and (not volatility_too_high) and structure_supports_compression
@@ -389,12 +397,23 @@ class VCBStrategy:
                            atr_ratio_threshold: float = 0.5,
                            bb_period: int = 20, bb_std: int = 2,
                            bb_width_ratio: float = 0.7,
-                           ttl_bars: int = 30) -> Optional[CompressionEvent]:
+                           ttl_bars: int = 30,
+                           compression_score_threshold: float = 70.0,
+                           validation_price_deviation_threshold: float = 2.0,
+                           validation_atr_relative_threshold: float = 1.5,
+                           validation_amplitude_ratio_threshold: float = 0.4,
+                           breakout_threshold: float = 0.002,
+                           breakout_invalidation_threshold: float = 0.03,
+                           score_weight_atr: float = 0.3,
+                           score_weight_duration: float = 0.25,
+                           score_weight_volume: float = 0.2,
+                           score_weight_range: float = 0.15,
+                           score_weight_ma: float = 0.1) -> Optional[CompressionEvent]:
         """
         检测波动率压缩（v2多时间框架版本）
 
         压缩判定条件：
-        1. Level 1 (5分钟周期): ATR相对压缩 + 布林带宽度收缩 + 压缩评分>=70
+        1. Level 1 (5分钟周期): ATR相对压缩 + 布林带宽度收缩 + 压缩评分>=threshold
         2. Level 2 (15分钟周期): 趋势强度验证 + 波动率背景确认 + 价格结构确认
 
         Args:
@@ -406,6 +425,17 @@ class VCBStrategy:
             bb_std: 布林带标准差倍数（默认2）
             bb_width_ratio: 布林带宽度收缩比率（默认0.7）
             ttl_bars: 压缩事件TTL（K线数量，默认30）
+            compression_score_threshold: 压缩评分阈值（默认70.0，只有评分>=此值才创建压缩事件）
+            validation_price_deviation_threshold: 15分钟验证价格偏离度阈值（默认2.0%）
+            validation_atr_relative_threshold: 15分钟验证ATR相对水平阈值（默认1.5%）
+            validation_amplitude_ratio_threshold: 15分钟验证振幅比率阈值（默认0.4）
+            breakout_threshold: 突破幅度阈值（默认0.002，即0.2%）
+            breakout_invalidation_threshold: 失效水平阈值（默认0.03，即3%）
+            score_weight_atr: 压缩评分ATR权重（默认0.3）
+            score_weight_duration: 压缩评分持续时间权重（默认0.25）
+            score_weight_volume: 压缩评分成交量权重（默认0.2）
+            score_weight_range: 压缩评分价格区间权重（默认0.15）
+            score_weight_ma: 压缩评分均线权重（默认0.1）
 
         Returns:
             CompressionEvent: 如果检测到压缩，返回压缩事件；否则返回None
@@ -490,15 +520,20 @@ class VCBStrategy:
                 closes=closes_5m,
                 volumes=volumes_5m,
                 highs=highs_5m,
-                lows=lows_5m
+                lows=lows_5m,
+                score_weight_atr=score_weight_atr,
+                score_weight_duration=score_weight_duration,
+                score_weight_volume=score_weight_volume,
+                score_weight_range=score_weight_range,
+                score_weight_ma=score_weight_ma
             )
 
             compression_score = score_result['total_score']
             atr_ratio_5m = score_result['atr_ratio']  # 使用评分计算中的atr_ratio（更准确）
 
-            # v2新增：只有压缩评分>=70才认为是高质量压缩
-            if compression_score < 70:
-                logger.debug(f"{symbol} 压缩评分不足: {compression_score:.2f} < 70，忽略")
+            # v2新增：只有压缩评分>=threshold才认为是高质量压缩
+            if compression_score < compression_score_threshold:
+                logger.debug(f"{symbol} 压缩评分不足: {compression_score:.2f} < {compression_score_threshold}，忽略")
                 return None
 
             # ==================== Level 2: 15分钟周期验证 ====================
@@ -511,7 +546,12 @@ class VCBStrategy:
                 return None
 
             # 15分钟验证逻辑（根据白皮书附录）
-            validation_passed, validation_details = self._validate_15m_compression(df_15m)
+            validation_passed, validation_details = self._validate_15m_compression(
+                df_15m,
+                price_deviation_threshold=validation_price_deviation_threshold,
+                atr_relative_threshold=validation_atr_relative_threshold,
+                amplitude_ratio_threshold=validation_amplitude_ratio_threshold
+            )
             if not validation_passed:
                 logger.debug(f"{symbol} 15分钟周期验证未通过: {validation_details}")
                 return None
@@ -523,13 +563,13 @@ class VCBStrategy:
             compression_high = float(highs_5m.iloc[-compression_period:].max())
             compression_low = float(lows_5m.iloc[-compression_period:].min())
 
-            # v2新增：计算突破水平和失效水平
-            # 突破水平：压缩区间边界的1%
-            breakout_up = compression_high * 1.01
-            breakout_down = compression_low * 0.99
-            # 失效水平：压缩区间边界的3%
-            invalidation_up = compression_high * 1.03
-            invalidation_down = compression_low * 0.97
+            # v2新增：计算突破水平和失效水平（使用配置参数）
+            # 突破水平：压缩区间边界 ± breakout_threshold
+            breakout_up = compression_high * (1 + breakout_threshold)
+            breakout_down = compression_low * (1 - breakout_threshold)
+            # 失效水平：压缩区间边界 ± breakout_invalidation_threshold
+            invalidation_up = compression_high * (1 + breakout_invalidation_threshold)
+            invalidation_down = compression_low * (1 - breakout_invalidation_threshold)
 
             # 如果该币种已有压缩事件，检查是否需要更新
             if symbol in self.compression_pool:
@@ -602,7 +642,11 @@ class VCBStrategy:
             return None
 
     def _evaluate_breakout_quality(self, df, current_close, current_volume,
-                                   atr_14, highs, lows, closes, volumes) -> dict:
+                                   atr_14, highs, lows, closes, volumes,
+                                   body_atr_multiplier: float = 0.4,
+                                   shadow_ratio: float = 0.5,
+                                   volume_min_multiplier: float = 1.5,
+                                   new_high_low_lookback: int = 10) -> dict:
         """
         评估突破质量（v2新增）
 
@@ -632,7 +676,7 @@ class VCBStrategy:
             # 1. 实体大小条件
             candle_body = abs(current_close - current_open)
             atr_14_value = atr_14.iloc[-1] if len(atr_14) > 0 else 0
-            condition1 = candle_body >= 0.4 * atr_14_value if atr_14_value > 0 else False
+            condition1 = candle_body >= body_atr_multiplier * atr_14_value if atr_14_value > 0 else False
 
             # 2. 影线长度条件
             if current_close > current_open:  # 阳线
@@ -643,19 +687,19 @@ class VCBStrategy:
                 lower_shadow = current_close - lows.iloc[-1]
 
             max_shadow = max(upper_shadow, lower_shadow)
-            condition2 = max_shadow < 0.3 * candle_body if candle_body > 0 else True
+            condition2 = max_shadow < shadow_ratio * candle_body if candle_body > 0 else True
 
             # 3. 成交量条件
-            # 检查成交量是否显著高于最近10根K线的最低成交量
-            lookback = min(10, len(volumes))
+            # 检查成交量是否显著高于最近N根K线的最低成交量
+            lookback = min(new_high_low_lookback, len(volumes))
             if lookback > 0:
                 min_recent_volume = volumes.iloc[-lookback:].min()
-                condition3 = current_volume > 1.5 * min_recent_volume if min_recent_volume > 0 else False
+                condition3 = current_volume > volume_min_multiplier * min_recent_volume if min_recent_volume > 0 else False
             else:
                 condition3 = False
 
             # 4. 创新高/新低条件
-            lookback_high_low = min(10, len(highs), len(lows))
+            lookback_high_low = min(new_high_low_lookback, len(highs), len(lows))
             if lookback_high_low > 0:
                 # 检查是否创10根K线新高或新低
                 is_new_high = current_close == highs.iloc[-lookback_high_low:].max()
@@ -695,19 +739,27 @@ class VCBStrategy:
             }
 
     def detect_breakout(self, symbol: str,
-                        volume_period: int = 20, volume_multiplier: float = 1.0) -> Tuple[int, Dict]:
+                        volume_period: int = 20, volume_multiplier: float = 1.0,
+                        breakout_body_atr_multiplier: float = 0.4,
+                        breakout_shadow_ratio: float = 0.5,
+                        breakout_volume_min_multiplier: float = 1.5,
+                        breakout_new_high_low_lookback: int = 10) -> Tuple[int, Dict]:
         """
         检测突破信号（v2多时间框架版本）
 
         突破条件（使用1分钟K线数据）：
-        1. 价格突破压缩区间边界（上轨+1%做多，下轨-1%做空）
-        2. 成交量放大（Volume ≥ 1.5 × MA(Volume, period)）
+        1. 价格突破压缩区间边界（上轨+breakout_threshold做多，下轨-breakout_threshold做空）
+        2. 成交量放大（Volume ≥ volume_multiplier × MA(Volume, period)）
         3. 突破质量评分≥3/4个条件
 
         Args:
             symbol: 交易对符号
             volume_period: 成交量均线周期（默认20）
             volume_multiplier: 成交量放大倍数（默认1.0，即只要大于均线即可）
+            breakout_body_atr_multiplier: 突破实体ATR倍数（默认0.4，实体≥此值×ATR(14)）
+            breakout_shadow_ratio: 突破影线比率（默认0.5，影线<此值×实体）
+            breakout_volume_min_multiplier: 突破成交量最小倍数（默认1.5，成交量>此值×近期最低成交量）
+            breakout_new_high_low_lookback: 创新高/新低回看周期（默认10根K线）
 
         Returns:
             Tuple[int, Dict]: (信号值, 详情字典)
@@ -756,8 +808,14 @@ class VCBStrategy:
             volume_expansion = current_volume >= volume_multiplier * avg_volume
 
             # v2修改：使用压缩事件的突破水平而不是布林带边界
-            breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01)
-            breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99)
+            # 如果压缩事件中没有突破水平，使用默认计算（向后兼容）
+            if compression_event.breakout_levels:
+                breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01)
+                breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99)
+            else:
+                # 向后兼容：如果没有配置，使用默认1%
+                breakout_up = compression_event.compression_high * 1.01
+                breakout_down = compression_event.compression_low * 0.99
 
             # 检测突破
             signal = 0
@@ -785,7 +843,11 @@ class VCBStrategy:
                 highs=highs,
                 lows=lows,
                 closes=closes,
-                volumes=volumes
+                volumes=volumes,
+                body_atr_multiplier=breakout_body_atr_multiplier,
+                shadow_ratio=breakout_shadow_ratio,
+                volume_min_multiplier=breakout_volume_min_multiplier,
+                new_high_low_lookback=breakout_new_high_low_lookback
             )
             details['breakout_quality'] = quality_result
 
@@ -828,7 +890,10 @@ class VCBStrategy:
             return 0, {}
 
     def cleanup_compression_pool(self, symbol: str = None,
-                                 atr_short_period: int = 10, atr_mid_period: int = 60):
+                                 atr_short_period: int = 10, atr_mid_period: int = 60,
+                                 compression_score_min: float = 60.0,
+                                 atr_ratio_invalidation_threshold: float = 0.7,
+                                 pre_breakout_protection_zone: float = 0.005):
         """
         清理压缩池中的过期或失效事件（v2多时间框架版本）
 
@@ -836,6 +901,9 @@ class VCBStrategy:
             symbol: 指定清理的币种（None表示清理所有币种）
             atr_short_period: 短期ATR周期
             atr_mid_period: 中期ATR周期
+            compression_score_min: 压缩评分最低阈值（低于此值将被移除，除非在临界突破区）
+            atr_ratio_invalidation_threshold: ATR比率失效阈值（高于此值认为压缩失效）
+            pre_breakout_protection_zone: 临界突破保护区（价格距离突破边界在此范围内时，豁免失效判定）
 
         注意：压缩事件基于5分钟时间框架，因此清理时使用5分钟K线数据
         """
@@ -858,11 +926,29 @@ class VCBStrategy:
                     del self.compression_pool[sym]
                     continue
 
-                # v2新增：检查压缩评分是否过低（<60）
-                if event.compression_score < 60:
-                    logger.info(f"{sym} 压缩事件评分过低（{event.compression_score:.2f} < 60），从池中移除")
+                # v2新增：检查是否在临界突破区（防止黎明前失效）
+                is_pre_breakout = False
+                try:
+                    # 获取当前价格判断是否在临界区
+                    ticker = self.market_data_retriever.get_ticker_by_symbol(sym)
+                    if ticker and ticker.last:
+                        current_price = float(ticker.last)
+                        # 计算是否处于临界突破区
+                        distance_to_upper = abs(current_price - event.compression_high) / event.compression_high
+                        distance_to_lower = abs(current_price - event.compression_low) / event.compression_low
+                        is_pre_breakout = (distance_to_upper < pre_breakout_protection_zone or
+                                         distance_to_lower < pre_breakout_protection_zone)
+                except:
+                    pass
+
+                # 检查压缩评分是否过低（<threshold）
+                # 但如果在临界突破区，则豁免（防止黎明前失效）
+                if event.compression_score < compression_score_min and not is_pre_breakout:
+                    logger.info(f"{sym} 压缩事件评分过低（{event.compression_score:.2f} < {compression_score_min}），从池中移除")
                     del self.compression_pool[sym]
                     continue
+                elif event.compression_score < compression_score_min and is_pre_breakout:
+                    logger.info(f"{sym} 压缩事件评分过低但处于临界突破区，触发保护机制，暂不移除")
 
                 # 检查是否失效（ATR比率回升）
                 try:
@@ -881,10 +967,14 @@ class VCBStrategy:
                                 current_atr_ratio = current_atr_short / current_atr_mid
 
                                 # 使用更新后的is_invalid方法，同时检查ATR比率和压缩评分
-                                if event.is_invalid(current_atr_ratio):
-                                    logger.info(
-                                        f"{sym} 压缩事件已失效（ATR比率回升至{current_atr_ratio:.4f}），从池中移除")
-                                    del self.compression_pool[sym]
+                                # 但如果在临界突破区，则豁免（防止黎明前失效）
+                                if event.is_invalid(current_atr_ratio, threshold=atr_ratio_invalidation_threshold):
+                                    if is_pre_breakout:
+                                        logger.info(f"{sym} 压缩事件ATR比率回升但处于临界突破区，触发保护机制，暂不移除")
+                                    else:
+                                        logger.info(
+                                            f"{sym} 压缩事件已失效（ATR比率回升至{current_atr_ratio:.4f}），从池中移除")
+                                        del self.compression_pool[sym]
                 except Exception as e:
                     logger.warning(f"检查 {sym} 压缩事件失效状态时出错: {e}")
 

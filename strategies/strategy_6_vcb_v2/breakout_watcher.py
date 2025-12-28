@@ -50,7 +50,11 @@ class BreakoutWatcher:
         self.last_breakout_time = None
 
     def watch_compression_pool(self, volume_period: int = 20,
-                               volume_multiplier: float = 1.0) -> List[Dict]:
+                               volume_multiplier: float = 1.0,
+                               breakout_body_atr_multiplier: float = 0.4,
+                               breakout_shadow_ratio: float = 0.5,
+                               breakout_volume_min_multiplier: float = 1.5,
+                               breakout_new_high_low_lookback: int = 10) -> List[Dict]:
         """
         监控压缩池中的所有币种，检测突破
         
@@ -79,7 +83,11 @@ class BreakoutWatcher:
                     signal, details = self.strategy.detect_breakout(
                         symbol=symbol,
                         volume_period=volume_period,
-                        volume_multiplier=volume_multiplier
+                        volume_multiplier=volume_multiplier,
+                        breakout_body_atr_multiplier=breakout_body_atr_multiplier,
+                        breakout_shadow_ratio=breakout_shadow_ratio,
+                        breakout_volume_min_multiplier=breakout_volume_min_multiplier,
+                        breakout_new_high_low_lookback=breakout_new_high_low_lookback
                     )
 
                     if signal != 0:

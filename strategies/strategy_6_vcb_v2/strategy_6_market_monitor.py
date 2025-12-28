@@ -82,7 +82,33 @@ class VCBMarketMonitor:
                  break_even_r: float = 1.0,
 
                  # 币种过滤参数
-                 only_major_coins: bool = False):
+                 only_major_coins: bool = False,
+
+                 # v2.1新增参数：压缩评分相关
+                 compression_score_threshold: float = 70.0,
+                 compression_score_min: float = 60.0,
+                 atr_ratio_invalidation_threshold: float = 0.7,
+
+                 # v2.1新增参数：突破检测相关
+                 breakout_threshold: float = 0.002,
+                 breakout_invalidation_threshold: float = 0.03,
+                 pre_breakout_protection_zone: float = 0.005,
+                 breakout_body_atr_multiplier: float = 0.4,
+                 breakout_shadow_ratio: float = 0.5,
+                 breakout_volume_min_multiplier: float = 1.5,
+                 breakout_new_high_low_lookback: int = 10,
+
+                 # v2.1新增参数：15分钟验证相关
+                 validation_price_deviation_threshold: float = 2.0,
+                 validation_atr_relative_threshold: float = 1.5,
+                 validation_amplitude_ratio_threshold: float = 0.4,
+
+                 # v2.1新增参数：压缩评分权重
+                 score_weight_atr: float = 0.3,
+                 score_weight_duration: float = 0.25,
+                 score_weight_volume: float = 0.2,
+                 score_weight_range: float = 0.15,
+                 score_weight_ma: float = 0.1):
         """
         初始化VCB市场监控器
         
@@ -150,6 +176,26 @@ class VCBMarketMonitor:
         self.failure_exit_atr_threshold = failure_exit_atr_threshold
         self.break_even_r = break_even_r
         self.only_major_coins = only_major_coins
+
+        # v2.1新增参数
+        self.compression_score_threshold = compression_score_threshold
+        self.compression_score_min = compression_score_min
+        self.atr_ratio_invalidation_threshold = atr_ratio_invalidation_threshold
+        self.breakout_threshold = breakout_threshold
+        self.breakout_invalidation_threshold = breakout_invalidation_threshold
+        self.pre_breakout_protection_zone = pre_breakout_protection_zone
+        self.breakout_body_atr_multiplier = breakout_body_atr_multiplier
+        self.breakout_shadow_ratio = breakout_shadow_ratio
+        self.breakout_volume_min_multiplier = breakout_volume_min_multiplier
+        self.breakout_new_high_low_lookback = breakout_new_high_low_lookback
+        self.validation_price_deviation_threshold = validation_price_deviation_threshold
+        self.validation_atr_relative_threshold = validation_atr_relative_threshold
+        self.validation_amplitude_ratio_threshold = validation_amplitude_ratio_threshold
+        self.score_weight_atr = score_weight_atr
+        self.score_weight_duration = score_weight_duration
+        self.score_weight_volume = score_weight_volume
+        self.score_weight_range = score_weight_range
+        self.score_weight_ma = score_weight_ma
 
         self.client = get_okx_client()
         self.strategy = VCBStrategy(self.client)
@@ -742,13 +788,27 @@ class VCBMarketMonitor:
                     bb_period=self.bb_period,
                     bb_std=self.bb_std,
                     bb_width_ratio=self.bb_width_ratio,
-                    ttl_bars=self.ttl_bars
+                    ttl_bars=self.ttl_bars,
+                    compression_score_threshold=self.compression_score_threshold,
+                    validation_price_deviation_threshold=self.validation_price_deviation_threshold,
+                    validation_atr_relative_threshold=self.validation_atr_relative_threshold,
+                    validation_amplitude_ratio_threshold=self.validation_amplitude_ratio_threshold,
+                    breakout_threshold=self.breakout_threshold,
+                    breakout_invalidation_threshold=self.breakout_invalidation_threshold,
+                    score_weight_atr=self.score_weight_atr,
+                    score_weight_duration=self.score_weight_duration,
+                    score_weight_volume=self.score_weight_volume,
+                    score_weight_range=self.score_weight_range,
+                    score_weight_ma=self.score_weight_ma
                 )
 
                 # 清理过期压缩事件
                 self.strategy.cleanup_compression_pool(
                     atr_short_period=self.atr_short_period,
-                    atr_mid_period=self.atr_mid_period
+                    atr_mid_period=self.atr_mid_period,
+                    compression_score_min=self.compression_score_min,
+                    atr_ratio_invalidation_threshold=self.atr_ratio_invalidation_threshold,
+                    pre_breakout_protection_zone=self.pre_breakout_protection_zone
                 )
 
                 # 等待下次扫描
@@ -770,7 +830,11 @@ class VCBMarketMonitor:
                 # 监控压缩池中的币种
                 breakouts = self.watcher.watch_compression_pool(
                     volume_period=self.volume_period,
-                    volume_multiplier=self.volume_multiplier
+                    volume_multiplier=self.volume_multiplier,
+                    breakout_body_atr_multiplier=self.breakout_body_atr_multiplier,
+                    breakout_shadow_ratio=self.breakout_shadow_ratio,
+                    breakout_volume_min_multiplier=self.breakout_volume_min_multiplier,
+                    breakout_new_high_low_lookback=self.breakout_new_high_low_lookback
                 )
 
                 # 检查所有持仓的平仓条件
@@ -779,7 +843,10 @@ class VCBMarketMonitor:
                 # 清理过期压缩事件
                 self.strategy.cleanup_compression_pool(
                     atr_short_period=self.atr_short_period,
-                    atr_mid_period=self.atr_mid_period
+                    atr_mid_period=self.atr_mid_period,
+                    compression_score_min=self.compression_score_min,
+                    atr_ratio_invalidation_threshold=self.atr_ratio_invalidation_threshold,
+                    pre_breakout_protection_zone=self.pre_breakout_protection_zone
                 )
 
                 # 等待下次检查（每根K线检查一次）
@@ -939,7 +1006,33 @@ def main():
         leverage=default_config.get('leverage', 3),
         trailing_stop_pct=default_config.get('trailing_stop_pct', 1.0),
         stop_loss_atr_multiplier=default_config.get('stop_loss_atr_multiplier', 0.8),
-        take_profit_r=default_config.get('take_profit_r', 2.0)
+        take_profit_r=default_config.get('take_profit_r', 2.0),
+        take_profit_mode=default_config.get('take_profit_mode', 'r_multiple'),
+        take_profit_r_major=default_config.get('take_profit_r_major', 1.5),
+        take_profit_r_alt=default_config.get('take_profit_r_alt', 2.5),
+        failure_exit_bars=default_config.get('failure_exit_bars', 10),
+        failure_exit_atr_threshold=default_config.get('failure_exit_atr_threshold', 1.2),
+        break_even_r=default_config.get('break_even_r', 1.0),
+        only_major_coins=default_config.get('only_major_coins', False),
+        # v2.1新增参数
+        compression_score_threshold=default_config.get('compression_score_threshold', 70.0),
+        compression_score_min=default_config.get('compression_score_min', 60.0),
+        atr_ratio_invalidation_threshold=default_config.get('atr_ratio_invalidation_threshold', 0.7),
+        breakout_threshold=default_config.get('breakout_threshold', 0.002),
+        breakout_invalidation_threshold=default_config.get('breakout_invalidation_threshold', 0.03),
+        pre_breakout_protection_zone=default_config.get('pre_breakout_protection_zone', 0.005),
+        breakout_body_atr_multiplier=default_config.get('breakout_body_atr_multiplier', 0.4),
+        breakout_shadow_ratio=default_config.get('breakout_shadow_ratio', 0.5),
+        breakout_volume_min_multiplier=default_config.get('breakout_volume_min_multiplier', 1.5),
+        breakout_new_high_low_lookback=default_config.get('breakout_new_high_low_lookback', 10),
+        validation_price_deviation_threshold=default_config.get('validation_price_deviation_threshold', 2.0),
+        validation_atr_relative_threshold=default_config.get('validation_atr_relative_threshold', 1.5),
+        validation_amplitude_ratio_threshold=default_config.get('validation_amplitude_ratio_threshold', 0.4),
+        score_weight_atr=default_config.get('score_weight_atr', 0.3),
+        score_weight_duration=default_config.get('score_weight_duration', 0.25),
+        score_weight_volume=default_config.get('score_weight_volume', 0.2),
+        score_weight_range=default_config.get('score_weight_range', 0.15),
+        score_weight_ma=default_config.get('score_weight_ma', 0.1)
     )
 
     monitor.run()

@@ -73,7 +73,18 @@ class CompressionScanner:
                     bb_period: int = 20,
                     bb_std: int = 2,
                     bb_width_ratio: float = 0.7,
-                    ttl_bars: int = 30) -> Dict[str, CompressionEvent]:
+                    ttl_bars: int = 30,
+                    compression_score_threshold: float = 70.0,
+                    validation_price_deviation_threshold: float = 2.0,
+                    validation_atr_relative_threshold: float = 1.5,
+                    validation_amplitude_ratio_threshold: float = 0.4,
+                    breakout_threshold: float = 0.002,
+                    breakout_invalidation_threshold: float = 0.03,
+                    score_weight_atr: float = 0.3,
+                    score_weight_duration: float = 0.25,
+                    score_weight_volume: float = 0.2,
+                    score_weight_range: float = 0.15,
+                    score_weight_ma: float = 0.1) -> Dict[str, CompressionEvent]:
         """
         扫描整个市场，寻找压缩事件（v2多时间框架版本）
 
@@ -112,7 +123,12 @@ class CompressionScanner:
                     executor.submit(
                         self._scan_single_symbol,
                         symbol, atr_short_period, atr_mid_period,
-                        atr_ratio_threshold, bb_period, bb_std, bb_width_ratio, ttl_bars
+                        atr_ratio_threshold, bb_period, bb_std, bb_width_ratio, ttl_bars,
+                        compression_score_threshold, validation_price_deviation_threshold,
+                        validation_atr_relative_threshold, validation_amplitude_ratio_threshold,
+                        breakout_threshold, breakout_invalidation_threshold,
+                        score_weight_atr, score_weight_duration, score_weight_volume,
+                        score_weight_range, score_weight_ma
                     ): symbol
                     for symbol in symbols
                 }
@@ -153,7 +169,18 @@ class CompressionScanner:
                             atr_short_period: int, atr_mid_period: int,
                             atr_ratio_threshold: float,
                             bb_period: int, bb_std: int,
-                            bb_width_ratio: float, ttl_bars: int) -> CompressionEvent:
+                            bb_width_ratio: float, ttl_bars: int,
+                            compression_score_threshold: float = 70.0,
+                            validation_price_deviation_threshold: float = 2.0,
+                            validation_atr_relative_threshold: float = 1.5,
+                            validation_amplitude_ratio_threshold: float = 0.4,
+                            breakout_threshold: float = 0.002,
+                            breakout_invalidation_threshold: float = 0.03,
+                            score_weight_atr: float = 0.3,
+                            score_weight_duration: float = 0.25,
+                            score_weight_volume: float = 0.2,
+                            score_weight_range: float = 0.15,
+                            score_weight_ma: float = 0.1) -> CompressionEvent:
         """
         扫描单个币种（v2多时间框架版本）
 
@@ -182,7 +209,18 @@ class CompressionScanner:
                 bb_period=bb_period,
                 bb_std=bb_std,
                 bb_width_ratio=bb_width_ratio,
-                ttl_bars=ttl_bars
+                ttl_bars=ttl_bars,
+                compression_score_threshold=compression_score_threshold,
+                validation_price_deviation_threshold=validation_price_deviation_threshold,
+                validation_atr_relative_threshold=validation_atr_relative_threshold,
+                validation_amplitude_ratio_threshold=validation_amplitude_ratio_threshold,
+                breakout_threshold=breakout_threshold,
+                breakout_invalidation_threshold=breakout_invalidation_threshold,
+                score_weight_atr=score_weight_atr,
+                score_weight_duration=score_weight_duration,
+                score_weight_volume=score_weight_volume,
+                score_weight_range=score_weight_range,
+                score_weight_ma=score_weight_ma
             )
 
             return compression
