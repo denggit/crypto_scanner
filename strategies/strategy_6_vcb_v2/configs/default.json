@@ -5,7 +5,6 @@
   "scan_interval_minutes": 5,
   "max_workers": 10,
   "only_major_coins": false,
-  "bar": "1m",
   "atr_short_period": 10,
   "atr_mid_period": 60,
   "atr_ratio_threshold": 0.5,
@@ -25,8 +24,8 @@
   "failure_exit_atr_threshold": 1.2,
   "break_even_r": 1.0,
   "trade": true,
-  "trade_amount": 20.0,
+  "trade_amount": 10.0,
   "trade_mode": 3,
-  "leverage": 10
+  "leverage": 5
 }
 
