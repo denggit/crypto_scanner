@@ -68,9 +68,14 @@ class CompressionEvent:
         # v2新增属性
         self.timeframe = timeframe
         self.compression_score = compression_score
+        self.initial_compression_score = compression_score  # v2.1新增：记录初始评分（用于评分锁定）
+        self.score_locked = False  # v2.1新增：评分是否锁定
         self.metrics = metrics or {}
         self.breakout_levels = breakout_levels or {}
         self.invalidation_levels = invalidation_levels or {}
+        # v2.1新增：临界保护线（用于快速判断是否在临界区）
+        self.pre_breakout_upper = compression_high * 0.995 if compression_high else None  # 上轨 - 0.5%
+        self.pre_breakout_lower = compression_low * 1.005 if compression_low else None  # 下轨 + 0.5%
 
     def is_expired(self, current_bar_count: int) -> bool:
         """
@@ -85,7 +90,7 @@ class CompressionEvent:
         return current_bar_count >= self.ttl_bars
 
     def is_invalid(self, current_atr_ratio: float = None, threshold: float = 0.7,
-                   min_compression_score: float = 60.0) -> bool:
+                   min_compression_score: float = 60.0, current_price: float = None) -> bool:
         """
         检查压缩事件是否失效（ATR比率回升或压缩评分过低）
 
@@ -93,11 +98,31 @@ class CompressionEvent:
             current_atr_ratio: 当前ATR比率（可选）
             threshold: ATR比率失效阈值（默认0.7）
             min_compression_score: 最小压缩评分阈值（默认60.0）
+            current_price: 当前价格（可选，用于v2.1评分锁定机制）
 
         Returns:
             bool: True表示已失效
         """
-        # v2新增：压缩评分过低则失效
+        # v2.1新增：评分锁定机制
+        # 如果价格未破坏结构（在压缩区间内），且初始评分≥70，则评分锁定
+        if current_price is not None and self.initial_compression_score >= 70.0:
+            # 检查价格是否在压缩区间内（未破坏结构）
+            if self.compression_low <= current_price <= self.compression_high:
+                # 价格在压缩区间内，评分锁定（不因评分下降而失效）
+                if not self.score_locked:
+                    self.score_locked = True
+                    logger.debug(f"{self.symbol} 评分锁定：价格在压缩区间内，初始评分={self.initial_compression_score:.2f}")
+                # 评分锁定后，只检查ATR比率，不检查评分
+                if current_atr_ratio is not None:
+                    return current_atr_ratio > threshold
+                return False
+            else:
+                # 价格已破坏结构，评分锁定失效
+                if self.score_locked:
+                    self.score_locked = False
+                    logger.debug(f"{self.symbol} 评分锁定失效：价格已破坏结构")
+
+        # v2新增：压缩评分过低则失效（但如果在临界区会被豁免，见cleanup_compression_pool）
         if self.compression_score < min_compression_score:
             return True
 
@@ -106,6 +131,24 @@ class CompressionEvent:
             return current_atr_ratio > threshold
 
         return False
+
+    def is_in_pre_breakout_zone(self, current_price: float) -> bool:
+        """
+        检查价格是否在临界突破区（v2.1新增）
+
+        Args:
+            current_price: 当前价格
+
+        Returns:
+            bool: True表示在临界突破区
+        """
+        if self.pre_breakout_upper is None or self.pre_breakout_lower is None:
+            return False
+        
+        # 根据白皮书：上临界线 = 上轨 * 0.995，下临界线 = 下轨 * 1.005
+        # 价格在 [上临界线, 上轨] 或 [下轨, 下临界线] 范围内
+        return (self.pre_breakout_upper <= current_price <= self.compression_high) or \
+               (self.compression_low <= current_price <= self.pre_breakout_lower)
 
 
 class VCBStrategy:
@@ -563,13 +606,16 @@ class VCBStrategy:
             compression_high = float(highs_5m.iloc[-compression_period:].max())
             compression_low = float(lows_5m.iloc[-compression_period:].min())
 
-            # v2新增：计算突破水平和失效水平（使用配置参数）
-            # 突破水平：压缩区间边界 ± breakout_threshold
+            # v2.1新增：计算突破水平和失效水平（使用配置参数）
+            # 突破水平：压缩区间边界 ± breakout_threshold（v2.1从1%降低到0.2%）
             breakout_up = compression_high * (1 + breakout_threshold)
             breakout_down = compression_low * (1 - breakout_threshold)
             # 失效水平：压缩区间边界 ± breakout_invalidation_threshold
             invalidation_up = compression_high * (1 + breakout_invalidation_threshold)
             invalidation_down = compression_low * (1 - breakout_invalidation_threshold)
+            # v2.1新增：临界保护线（根据白皮书：上临界线=上轨*0.995，下临界线=下轨*1.005）
+            pre_breakout_upper = compression_high * 0.995  # 上轨 - 0.5%
+            pre_breakout_lower = compression_low * 1.005  # 下轨 + 0.5%
 
             # 如果该币种已有压缩事件，检查是否需要更新
             if symbol in self.compression_pool:
@@ -578,7 +624,8 @@ class VCBStrategy:
                 if compression_score > existing_event.compression_score:
                     logger.info(
                         f"更新 {symbol} 的压缩事件: 评分 {existing_event.compression_score:.2f} -> {compression_score:.2f}")
-                    self.compression_pool[symbol] = CompressionEvent(
+                    # v2.1：更新时也更新临界保护线
+                    event = CompressionEvent(
                         symbol=symbol,
                         start_time=datetime.now(),
                         atr_ratio=atr_ratio_5m,
@@ -601,6 +648,10 @@ class VCBStrategy:
                         breakout_levels={'up': breakout_up, 'down': breakout_down},
                         invalidation_levels={'up': invalidation_up, 'down': invalidation_down}
                     )
+                    # v2.1：手动设置临界保护线
+                    event.pre_breakout_upper = pre_breakout_upper
+                    event.pre_breakout_lower = pre_breakout_lower
+                    self.compression_pool[symbol] = event
                     return self.compression_pool[symbol]
                 else:
                     # 保持现有事件
@@ -630,6 +681,9 @@ class VCBStrategy:
                 breakout_levels={'up': breakout_up, 'down': breakout_down},
                 invalidation_levels={'up': invalidation_up, 'down': invalidation_down}
             )
+            # v2.1：手动设置临界保护线
+            compression_event.pre_breakout_upper = pre_breakout_upper
+            compression_event.pre_breakout_lower = pre_breakout_lower
 
             self.compression_pool[symbol] = compression_event
             logger.info(
@@ -645,15 +699,15 @@ class VCBStrategy:
                                    atr_14, highs, lows, closes, volumes,
                                    body_atr_multiplier: float = 0.4,
                                    shadow_ratio: float = 0.5,
-                                   volume_min_multiplier: float = 1.5,
+                                   volume_min_multiplier: float = 1.2,  # v2.1从1.5降低到1.2
                                    new_high_low_lookback: int = 10) -> dict:
         """
-        评估突破质量（v2新增）
+        评估突破质量（v2.1新增）
 
-        根据v2白皮书，突破K线必须满足以下条件中的至少3条：
+        根据v2.1白皮书，突破K线必须满足以下条件中的至少3条：
         1. 实体 ≥ 0.4 × ATR(14)
-        2. 影线短（假突破过滤，影线<30%实体）
-        3. 成交量显著高于近期低点
+        2. 影线短（假突破过滤，影线<50%实体，v2.1从30%放宽到50%）
+        3. 成交量显著高于近期低点（v2.1从1.5倍降低到1.2倍）
         4. 创局部新高/新低（动量）
 
         Args:
@@ -739,17 +793,17 @@ class VCBStrategy:
             }
 
     def detect_breakout(self, symbol: str,
-                        volume_period: int = 20, volume_multiplier: float = 1.0,
+                        volume_period: int = 20, volume_multiplier: float = 1.2,
                         breakout_body_atr_multiplier: float = 0.4,
                         breakout_shadow_ratio: float = 0.5,
-                        breakout_volume_min_multiplier: float = 1.5,
+                        breakout_volume_min_multiplier: float = 1.2,
                         breakout_new_high_low_lookback: int = 10) -> Tuple[int, Dict]:
         """
-        检测突破信号（v2多时间框架版本）
+        检测突破信号（v2.1多时间框架版本）
 
         突破条件（使用1分钟K线数据）：
-        1. 价格突破压缩区间边界（上轨+breakout_threshold做多，下轨-breakout_threshold做空）
-        2. 成交量放大（Volume ≥ volume_multiplier × MA(Volume, period)）
+        1. 价格突破压缩区间边界（上轨+breakout_threshold做多，下轨-breakout_threshold做空，v2.1从1%降低到0.2%）
+        2. 成交量放大（Volume ≥ volume_multiplier × MA(Volume, period)，v2.1从1.5倍降低到1.2倍）
         3. 突破质量评分≥3/4个条件
 
         Args:
@@ -804,7 +858,7 @@ class VCBStrategy:
 
             avg_volume = volume_ma.iloc[-1]
 
-            # v2修改：成交量需要≥volume_multiplier×20均量
+            # v2.1修改：成交量需要≥volume_multiplier×20均量（v2.1从1.5倍降低到1.2倍，允许温和放量启动）
             volume_expansion = current_volume >= volume_multiplier * avg_volume
 
             # v2修改：使用压缩事件的突破水平而不是布林带边界
@@ -926,18 +980,17 @@ class VCBStrategy:
                     del self.compression_pool[sym]
                     continue
 
-                # v2新增：检查是否在临界突破区（防止黎明前失效）
+                # v2.1新增：检查是否在临界突破区（防止黎明前失效）
+                # 根据白皮书：上临界线 = 上轨 * 0.995，下临界线 = 下轨 * 1.005
                 is_pre_breakout = False
+                current_price = None
                 try:
                     # 获取当前价格判断是否在临界区
                     ticker = self.market_data_retriever.get_ticker_by_symbol(sym)
                     if ticker and ticker.last:
                         current_price = float(ticker.last)
-                        # 计算是否处于临界突破区
-                        distance_to_upper = abs(current_price - event.compression_high) / event.compression_high
-                        distance_to_lower = abs(current_price - event.compression_low) / event.compression_low
-                        is_pre_breakout = (distance_to_upper < pre_breakout_protection_zone or
-                                         distance_to_lower < pre_breakout_protection_zone)
+                        # v2.1：使用临界保护线直接判断（更准确）
+                        is_pre_breakout = event.is_in_pre_breakout_zone(current_price)
                 except:
                     pass
 
@@ -966,9 +1019,10 @@ class VCBStrategy:
                             if not pd.isna(current_atr_short) and not pd.isna(current_atr_mid) and current_atr_mid != 0:
                                 current_atr_ratio = current_atr_short / current_atr_mid
 
-                                # 使用更新后的is_invalid方法，同时检查ATR比率和压缩评分
+                                # v2.1：使用更新后的is_invalid方法，传入当前价格以支持评分锁定机制
                                 # 但如果在临界突破区，则豁免（防止黎明前失效）
-                                if event.is_invalid(current_atr_ratio, threshold=atr_ratio_invalidation_threshold):
+                                if event.is_invalid(current_atr_ratio, threshold=atr_ratio_invalidation_threshold,
+                                                   current_price=current_price):
                                     if is_pre_breakout:
                                         logger.info(f"{sym} 压缩事件ATR比率回升但处于临界突破区，触发保护机制，暂不移除")
                                     else:

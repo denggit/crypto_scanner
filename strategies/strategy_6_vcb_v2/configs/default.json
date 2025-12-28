@@ -35,7 +35,7 @@
   "pre_breakout_protection_zone": 0.005,
   "breakout_body_atr_multiplier": 0.4,
   "breakout_shadow_ratio": 0.5,
-  "breakout_volume_min_multiplier": 1.5,
+  "breakout_volume_min_multiplier": 1.2,
   "breakout_new_high_low_lookback": 10,
   "validation_price_deviation_threshold": 2.0,
   "validation_atr_relative_threshold": 1.5,

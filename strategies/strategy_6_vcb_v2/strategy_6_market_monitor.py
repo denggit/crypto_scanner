@@ -388,7 +388,7 @@ class VCBMarketMonitor:
             entry_atr_short = None
             try:
                 limit = self.atr_mid_period + 5
-                df = self.market_data_retriever.get_kline(symbol, self.bar, limit)
+                df = self.market_data_retriever.get_kline(symbol, '5m', limit)  # v2.1：使用5分钟K线获取ATR
                 if df is not None and len(df) >= 10:
                     from tools.technical_indicators import atr
                     atr_short = atr(df, 10)
@@ -404,9 +404,14 @@ class VCBMarketMonitor:
             # 计算手续费（实际投入金额的0.05%）
             fee = self.trade_amount * 0.0005  # 0.05%
 
-            # 更新持仓
+                # 更新持仓
             if symbol not in self.positions:
                 # 新开仓
+                # v2.1新增：记录突破边界用于延迟确认
+                breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01) if compression_event else None
+                breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99) if compression_event else None
+                entry_volume = details.get('current_volume', 0)  # v2.1新增：记录入场时的成交量
+                
                 self.positions[symbol] = {
                     'position': signal,
                     'entry_price': price,
@@ -418,7 +423,10 @@ class VCBMarketMonitor:
                     'entry_atr': entry_atr,  # ATR(60) 用于失败退出
                     'entry_atr_short': entry_atr_short,  # ATR(10) 用于结构验证
                     'compression_event': compression_event,
-                    'entry_fee': fee  # 开仓手续费
+                    'entry_fee': fee,  # 开仓手续费
+                    'breakout_up': breakout_up,  # v2.1新增：突破上边界（用于延迟确认）
+                    'breakout_down': breakout_down,  # v2.1新增：突破下边界（用于延迟确认）
+                    'entry_volume': entry_volume  # v2.1新增：入场时的成交量（用于延迟确认）
                 }
 
                 logger.info(f"📊 {symbol} 开仓: 入场={price:.4f}, 止损={stop_loss:.4f}, 止盈={take_profit:.4f}")
@@ -497,7 +505,7 @@ class VCBMarketMonitor:
                 entry_atr_short = None
                 try:
                     limit = self.atr_mid_period + 5
-                    df = self.market_data_retriever.get_kline(symbol, self.bar, limit)
+                    df = self.market_data_retriever.get_kline(symbol, '5m', limit)  # v2.1：使用5分钟K线获取ATR
                     if df is not None and len(df) >= 10:
                         from tools.technical_indicators import atr
                         atr_short = atr(df, 10)
@@ -514,6 +522,11 @@ class VCBMarketMonitor:
                 fee = self.trade_amount * 0.0005  # 0.05%
 
                 # 更新为新持仓
+                # v2.1新增：记录突破边界用于延迟确认
+                breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01) if compression_event else None
+                breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99) if compression_event else None
+                entry_volume = details.get('current_volume', 0)  # v2.1新增：记录入场时的成交量
+                
                 self.positions[symbol] = {
                     'position': signal,
                     'entry_price': price,
@@ -525,7 +538,10 @@ class VCBMarketMonitor:
                     'entry_atr': entry_atr,  # ATR(60) 用于失败退出
                     'entry_atr_short': entry_atr_short,  # ATR(10) 用于结构验证
                     'compression_event': compression_event,
-                    'entry_fee': fee  # 开仓手续费
+                    'entry_fee': fee,  # 开仓手续费
+                    'breakout_up': breakout_up,  # v2.1新增：突破上边界（用于延迟确认）
+                    'breakout_down': breakout_down,  # v2.1新增：突破下边界（用于延迟确认）
+                    'entry_volume': entry_volume  # v2.1新增：入场时的成交量（用于延迟确认）
                 }
 
                 logger.info(f"📊 {symbol} 换仓: 入场={price:.4f}, 止损={new_stop_loss:.4f}, 止盈={new_take_profit:.4f}")
@@ -603,14 +619,10 @@ class VCBMarketMonitor:
                     position_info['lowest_price'] = min(position_info.get('lowest_price', current_price), current_price)
 
                 # 计算从入场到现在经过了多少根K线（用于判断是否在验证期内）
+                # v2.1：延迟确认和结构验证都使用1分钟K线
                 if entry_time:
                     time_diff = datetime.now() - entry_time
-                    if self.bar == '1m':
-                        bars_elapsed = int(time_diff.total_seconds() / 60)
-                    elif self.bar == '5m':
-                        bars_elapsed = int(time_diff.total_seconds() / 300)
-                    else:
-                        bars_elapsed = int(time_diff.total_seconds() / 60)  # 默认1m
+                    bars_elapsed = int(time_diff.total_seconds() / 60)  # 使用1分钟K线计算
                 else:
                     bars_elapsed = 999  # 如果没有入场时间，假设不在验证期内
 
@@ -620,7 +632,7 @@ class VCBMarketMonitor:
                     current_price=current_price,
                     position=position,
                     entry_time=entry_time,
-                    entry_bar=self.bar,
+                    entry_bar='1m',  # 延迟确认使用1分钟K线
                     compression_event=compression_event,
                     entry_atr_short=entry_atr_short
                 )
@@ -629,8 +641,45 @@ class VCBMarketMonitor:
                     positions_to_close.append((symbol, reason, current_price))
                     continue
 
+                # v2.1新增：延迟确认机制（第三层过滤，反噪声）
+                # 入场后观察1-2根K线，不允许价格重新回到突破边界内，成交量不能快速塌缩
+                if bars_elapsed <= 2:  # 前2根K线内
+                    breakout_up = position_info.get('breakout_up')
+                    breakout_down = position_info.get('breakout_down')
+                    entry_volume = position_info.get('entry_volume', 0)
+                    
+                    if breakout_up is not None and breakout_down is not None:
+                        # 检查价格是否回到突破边界内
+                        price_back_inside = False
+                        if position == 1:  # 做多
+                            if current_price < breakout_up:
+                                price_back_inside = True
+                        else:  # 做空
+                            if current_price > breakout_down:
+                                price_back_inside = True
+                        
+                        if price_back_inside:
+                            # 价格回到突破边界内，延迟确认失败
+                            logger.warning(f"{symbol} 延迟确认失败：价格回到突破边界内（入场后{bars_elapsed}根K线）")
+                            positions_to_close.append((symbol, "DELAYED_CONFIRMATION_FAIL", current_price))
+                            continue
+                        
+                        # 检查成交量是否快速塌缩（当前成交量 < 0.5 × 入场成交量）
+                        try:
+                            # 获取当前成交量
+                            limit = 5
+                            df = self.market_data_retriever.get_kline(symbol, '1m', limit)
+                            if df is not None and len(df) >= 1:
+                                current_volume = float(df['vol'].iloc[-1] if 'vol' in df.columns else df['volume'].iloc[-1])
+                                if entry_volume > 0 and current_volume < 0.5 * entry_volume:
+                                    logger.warning(f"{symbol} 延迟确认失败：成交量快速塌缩（入场后{bars_elapsed}根K线）")
+                                    positions_to_close.append((symbol, "DELAYED_CONFIRMATION_FAIL", current_price))
+                                    continue
+                        except:
+                            pass  # 如果无法获取成交量，跳过此检查
+
                 # 1. 检查硬止损（验证期外才检查，避免过早止损）
-                # 验证期内（前2根K线）不触发硬止损，只检查结构验证
+                # 验证期内（前2根K线）不触发硬止损，只检查结构验证和延迟确认
                 if bars_elapsed > 2:
                     should_close, reason = self.position_manager.check_hard_stop_loss(
                         symbol=symbol,
@@ -865,18 +914,28 @@ class VCBMarketMonitor:
         self.running = True
 
         logger.info("=" * 60)
-        logger.info("VCB市场监控系统启动")
+        logger.info("VCB市场监控系统启动 (V2.1)")
         logger.info("=" * 60)
         logger.info(f"扫描参数:")
         logger.info(f"  - 最小交易量: {self.min_vol_ccy:,.0f} {self.currency}")
         logger.info(f"  - 扫描间隔: {self.scan_interval_minutes} 分钟")
-        logger.info(f"  - 并行线程数: {self.max_workers}")
         logger.info(f"压缩检测参数:")
-        logger.info(f"  - ATR: {self.atr_short_period}/{self.atr_mid_period}, 阈值={self.atr_ratio_threshold}")
-        logger.info(f"  - 布林带: {self.bb_period}, {self.bb_std}, 宽度比率={self.bb_width_ratio}")
-        logger.info(f"  - TTL: {self.ttl_bars} 根K线")
+        logger.info(f"  - ATR比率阈值: {self.atr_ratio_threshold} (短期/中期)")
+        logger.info(f"  - 压缩评分阈值: ≥{self.compression_score_threshold} (最低保留: {self.compression_score_min})")
+        logger.info(f"  - 临界保护区: ±{self.pre_breakout_protection_zone*100:.1f}% (v2.1新增)")
         logger.info(f"突破检测参数:")
-        logger.info(f"  - 成交量周期: {self.volume_period}, 倍数: {self.volume_multiplier}")
+        logger.info(f"  - 突破幅度: {self.breakout_threshold*100:.2f}% (v2.1从1%降低)")
+        logger.info(f"  - 成交量倍数: {self.volume_multiplier}× (v2.1从1.5降低)")
+        logger.info(f"  - 影线控制: <{self.breakout_shadow_ratio*100:.0f}%实体 (v2.1从30%放宽)")
+        logger.info(f"风险管理参数:")
+        take_profit_mode_names = {
+            'r_multiple': 'R倍止盈',
+            'bb_middle': '布林中轨止盈',
+            'bb_opposite': '对侧轨道止盈',
+            'atr_trailing': 'ATR跟踪止盈'
+        }
+        logger.info(f"  - 止盈模式: {take_profit_mode_names.get(self.take_profit_mode, self.take_profit_mode)}")
+        logger.info(f"  - 止盈R倍数: 主流币={self.take_profit_r_major}R, 山寨币={self.take_profit_r_alt}R")
         logger.info(f"交易模式: {'真实交易' if self.trade else '模拟交易'}")
         if self.trade:
             trade_mode_names = {1: "现货", 2: "全仓杠杆", 3: "逐仓杠杆"}

@@ -50,7 +50,7 @@ class BreakoutWatcher:
         self.last_breakout_time = None
 
     def watch_compression_pool(self, volume_period: int = 20,
-                               volume_multiplier: float = 1.0,
+                               volume_multiplier: float = 1.2,  # v2.1从1.0提高到1.2
                                breakout_body_atr_multiplier: float = 0.4,
                                breakout_shadow_ratio: float = 0.5,
                                breakout_volume_min_multiplier: float = 1.5,
