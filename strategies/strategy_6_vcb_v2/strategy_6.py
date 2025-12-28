@@ -65,7 +65,7 @@ class CompressionEvent:
         self.ttl_bars = ttl_bars
         self.bar_count = 0  # 已存活的K线数量
 
-        # V0.2新增属性
+        # v2新增属性
         self.timeframe = timeframe
         self.compression_score = compression_score
         self.metrics = metrics or {}
@@ -97,7 +97,7 @@ class CompressionEvent:
         Returns:
             bool: True表示已失效
         """
-        # V0.2新增：压缩评分过低则失效
+        # v2新增：压缩评分过低则失效
         if self.compression_score < min_compression_score:
             return True
 
@@ -127,7 +127,7 @@ class VCBStrategy:
     def _calculate_compression_score(self, df, atr_short, atr_mid, bb_width,
                                      bb_width_history, closes, volumes, highs, lows) -> dict:
         """
-        计算压缩评分（V0.2新增）
+        计算压缩评分（v2新增）
 
         Args:
             df: DataFrame，包含价格和成交量数据
@@ -391,7 +391,7 @@ class VCBStrategy:
                            bb_width_ratio: float = 0.7,
                            ttl_bars: int = 30) -> Optional[CompressionEvent]:
         """
-        检测波动率压缩（V0.2多时间框架版本）
+        检测波动率压缩（v2多时间框架版本）
 
         压缩判定条件：
         1. Level 1 (5分钟周期): ATR相对压缩 + 布林带宽度收缩 + 压缩评分>=70
@@ -473,7 +473,7 @@ class VCBStrategy:
             if bb_width_5m >= bb_width_ratio * bb_width_60_mean_5m:
                 return None
 
-            # V0.2新增：计算压缩评分
+            # v2新增：计算压缩评分
             # 获取布林带宽度历史序列
             if len(bb_upper_5m) >= 60:
                 bb_width_history_5m = ((bb_upper_5m.iloc[-60:] - bb_lower_5m.iloc[-60:]) / bb_middle_5m.iloc[-60:])
@@ -496,7 +496,7 @@ class VCBStrategy:
             compression_score = score_result['total_score']
             atr_ratio_5m = score_result['atr_ratio']  # 使用评分计算中的atr_ratio（更准确）
 
-            # V0.2新增：只有压缩评分>=70才认为是高质量压缩
+            # v2新增：只有压缩评分>=70才认为是高质量压缩
             if compression_score < 70:
                 logger.debug(f"{symbol} 压缩评分不足: {compression_score:.2f} < 70，忽略")
                 return None
@@ -523,7 +523,7 @@ class VCBStrategy:
             compression_high = float(highs_5m.iloc[-compression_period:].max())
             compression_low = float(lows_5m.iloc[-compression_period:].min())
 
-            # V0.2新增：计算突破水平和失效水平
+            # v2新增：计算突破水平和失效水平
             # 突破水平：压缩区间边界的1%
             breakout_up = compression_high * 1.01
             breakout_down = compression_low * 0.99
@@ -534,7 +534,7 @@ class VCBStrategy:
             # 如果该币种已有压缩事件，检查是否需要更新
             if symbol in self.compression_pool:
                 existing_event = self.compression_pool[symbol]
-                # V0.2修改：如果新压缩的评分更高，则更新
+                # v2修改：如果新压缩的评分更高，则更新
                 if compression_score > existing_event.compression_score:
                     logger.info(
                         f"更新 {symbol} 的压缩事件: 评分 {existing_event.compression_score:.2f} -> {compression_score:.2f}")
@@ -604,9 +604,9 @@ class VCBStrategy:
     def _evaluate_breakout_quality(self, df, current_close, current_volume,
                                    atr_14, highs, lows, closes, volumes) -> dict:
         """
-        评估突破质量（V0.2新增）
+        评估突破质量（v2新增）
 
-        根据V0.2白皮书，突破K线必须满足以下条件中的至少3条：
+        根据v2白皮书，突破K线必须满足以下条件中的至少3条：
         1. 实体 ≥ 0.4 × ATR(14)
         2. 影线短（假突破过滤，影线<30%实体）
         3. 成交量显著高于近期低点
@@ -697,7 +697,7 @@ class VCBStrategy:
     def detect_breakout(self, symbol: str,
                         volume_period: int = 20, volume_multiplier: float = 1.0) -> Tuple[int, Dict]:
         """
-        检测突破信号（V0.2多时间框架版本）
+        检测突破信号（v2多时间框架版本）
 
         突破条件（使用1分钟K线数据）：
         1. 价格突破压缩区间边界（上轨+1%做多，下轨-1%做空）
@@ -752,10 +752,10 @@ class VCBStrategy:
 
             avg_volume = volume_ma.iloc[-1]
 
-            # V0.2修改：成交量需要≥1.5×20均量
-            volume_expansion = current_volume >= 1.5 * avg_volume
+            # v2修改：成交量需要≥volume_multiplier×20均量
+            volume_expansion = current_volume >= volume_multiplier * avg_volume
 
-            # V0.2修改：使用压缩事件的突破水平而不是布林带边界
+            # v2修改：使用压缩事件的突破水平而不是布林带边界
             breakout_up = compression_event.breakout_levels.get('up', compression_event.compression_high * 1.01)
             breakout_down = compression_event.breakout_levels.get('down', compression_event.compression_low * 0.99)
 
@@ -830,7 +830,7 @@ class VCBStrategy:
     def cleanup_compression_pool(self, symbol: str = None,
                                  atr_short_period: int = 10, atr_mid_period: int = 60):
         """
-        清理压缩池中的过期或失效事件（V0.2多时间框架版本）
+        清理压缩池中的过期或失效事件（v2多时间框架版本）
 
         Args:
             symbol: 指定清理的币种（None表示清理所有币种）
@@ -858,7 +858,7 @@ class VCBStrategy:
                     del self.compression_pool[sym]
                     continue
 
-                # V0.2新增：检查压缩评分是否过低（<60）
+                # v2新增：检查压缩评分是否过低（<60）
                 if event.compression_score < 60:
                     logger.info(f"{sym} 压缩事件评分过低（{event.compression_score:.2f} < 60），从池中移除")
                     del self.compression_pool[sym]

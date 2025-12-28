@@ -12,7 +12,7 @@
   "bb_std": 2,
   "bb_width_ratio": 0.7,
   "volume_period": 20,
-  "volume_multiplier": 1.0,
+  "volume_multiplier": 1.2,
   "ttl_bars": 120,
   "trailing_stop_pct": 1.0,
   "stop_loss_atr_multiplier": 0.8,

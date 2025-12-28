@@ -38,7 +38,8 @@ class PositionManager:
     def __init__(self, market_data_retriever: MarketDataRetriever,
                  bar: str = '1m',
                  atr_mid_period: int = 60,
-                 stop_loss_atr_multiplier: float = 0.8,
+                 stop_loss_atr_multiplier: float = 1.2,  # 根据白皮书V0.2：1.2 × ATR(20)
+                 structure_stop_atr_multiplier: float = 0.2,  # 根据白皮书V0.2：压缩区间反侧 ± 0.2×ATR
                  take_profit_mode: str = 'r_multiple',  # 'r_multiple', 'bb_middle', 'bb_opposite', 'atr_trailing'
                  take_profit_r: float = 2.0,
                  take_profit_r_major: float = 1.5,  # 主流币R倍数
@@ -53,7 +54,8 @@ class PositionManager:
             market_data_retriever: 市场数据获取器
             bar: K线周期
             atr_mid_period: 中期ATR周期
-            stop_loss_atr_multiplier: 止损ATR倍数
+            stop_loss_atr_multiplier: 止损ATR倍数（根据白皮书V0.2：1.2 × ATR(20)）
+            structure_stop_atr_multiplier: 结构止损ATR倍数（根据白皮书V0.2：压缩区间反侧 ± 0.2×ATR）
             take_profit_mode: 止盈模式
             take_profit_r: 止盈R倍数（默认）
             take_profit_r_major: 主流币止盈R倍数
@@ -66,6 +68,7 @@ class PositionManager:
         self.bar = bar
         self.atr_mid_period = atr_mid_period
         self.stop_loss_atr_multiplier = stop_loss_atr_multiplier
+        self.structure_stop_atr_multiplier = structure_stop_atr_multiplier
         self.take_profit_mode = take_profit_mode
         self.take_profit_r = take_profit_r
         self.take_profit_r_major = take_profit_r_major
@@ -130,17 +133,17 @@ class PositionManager:
             current_atr = atr_mid.iloc[-1]
             atr_stop = current_atr * self.stop_loss_atr_multiplier
             
-            # 计算基于压缩区间的止损（使用压缩区间本体，而非BB边缘）
+            # 计算基于压缩区间的止损（根据白皮书V0.2：压缩区间反侧 ± structure_stop_atr_multiplier×ATR）
             if compression_event:
                 if position == 1:
-                    # 做多：止损在压缩区间最低价
-                    compression_stop = compression_event.compression_low
-                    # 取较大值（更宽松的止损），ATR作为兜底
+                    # 做多：结构止损 = compression_low - structure_stop_atr_multiplier×ATR
+                    compression_stop = compression_event.compression_low - self.structure_stop_atr_multiplier * current_atr
+                    # 取较大值（更保守的止损），根据白皮书V0.2：止损 = 结构止损 与 ATR动态止损 中更保守者
                     stop_loss = max(compression_stop, entry_price - atr_stop)
                 else:
-                    # 做空：止损在压缩区间最高价
-                    compression_stop = compression_event.compression_high
-                    # 取较小值（更宽松的止损），ATR作为兜底
+                    # 做空：结构止损 = compression_high + structure_stop_atr_multiplier×ATR
+                    compression_stop = compression_event.compression_high + self.structure_stop_atr_multiplier * current_atr
+                    # 取较小值（更保守的止损），根据白皮书V0.2：止损 = 结构止损 与 ATR动态止损 中更保守者
                     stop_loss = min(compression_stop, entry_price + atr_stop)
             else:
                 # 没有压缩事件，使用ATR止损
@@ -316,8 +319,8 @@ class PositionManager:
             compression_high = compression_event.compression_high
             
             if position == 1:
-                # 做多：如果价格回到压缩区间内部（compression_low - 0.2 × ATR(10)）
-                structure_fail_threshold = compression_low - 0.2 * current_atr_short
+                # 做多：如果价格回到压缩区间内部（compression_low - structure_stop_atr_multiplier × ATR(10)）
+                structure_fail_threshold = compression_low - self.structure_stop_atr_multiplier * current_atr_short
                 if current_price < structure_fail_threshold:
                     # 第 2 根不立即止损，第 3 根仍失败才平仓
                     if bars_elapsed >= 2:
@@ -325,8 +328,8 @@ class PositionManager:
                     # 第 1 根失败，记录但不平仓
                     return False, ""
             else:
-                # 做空：如果价格回到压缩区间内部（compression_high + 0.2 × ATR(10)）
-                structure_fail_threshold = compression_high + 0.2 * current_atr_short
+                # 做空：如果价格回到压缩区间内部（compression_high + structure_stop_atr_multiplier × ATR(10)）
+                structure_fail_threshold = compression_high + self.structure_stop_atr_multiplier * current_atr_short
                 if current_price > structure_fail_threshold:
                     # 第 2 根不立即止损，第 3 根仍失败才平仓
                     if bars_elapsed >= 2:

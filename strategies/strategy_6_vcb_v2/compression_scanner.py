@@ -75,7 +75,7 @@ class CompressionScanner:
                     bb_width_ratio: float = 0.7,
                     ttl_bars: int = 30) -> Dict[str, CompressionEvent]:
         """
-        扫描整个市场，寻找压缩事件（V0.2多时间框架版本）
+        扫描整个市场，寻找压缩事件（v2多时间框架版本）
 
         Args:
             atr_short_period: 短期ATR周期
@@ -155,7 +155,7 @@ class CompressionScanner:
                             bb_period: int, bb_std: int,
                             bb_width_ratio: float, ttl_bars: int) -> CompressionEvent:
         """
-        扫描单个币种（V0.2多时间框架版本）
+        扫描单个币种（v2多时间框架版本）
 
         Args:
             symbol: 交易对符号

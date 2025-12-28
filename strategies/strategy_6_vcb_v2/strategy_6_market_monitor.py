@@ -225,7 +225,7 @@ class VCBMarketMonitor:
 
             self.trading_record_file = filepath
 
-            # 创建CSV文件并写入表头（V0.2添加压缩评分）
+            # 创建CSV文件并写入表头（v2添加压缩评分）
             headers = ['时间', '币种', '交易类型', '成交价格', '成交额(USDT)', '手续费(USDT)', '杠杆倍数',
                        '压缩评分', '平仓盈亏(USDT)']
             with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
@@ -242,7 +242,7 @@ class VCBMarketMonitor:
                       fee: float, leverage: int, compression_score: Optional[float] = None,
                       pnl: Optional[float] = None):
         """
-        记录交易到CSV文件（V0.2添加压缩评分）
+        记录交易到CSV文件（v2添加压缩评分）
 
         Args:
             symbol: 交易对符号
@@ -251,7 +251,7 @@ class VCBMarketMonitor:
             trade_amount: 成交额（USDT）
             fee: 手续费（USDT）
             leverage: 杠杆倍数（现货为1）
-            compression_score: 压缩评分（V0.2新增）
+            compression_score: 压缩评分（v2新增）
             pnl: 平仓盈亏（USDT），开仓时为None
         """
         if not self.trading_record_file:
@@ -318,7 +318,7 @@ class VCBMarketMonitor:
             # 获取压缩事件（用于计算止损止盈）
             compression_event = details.get('compression_event')
 
-            # 获取压缩评分（V0.2新增）
+            # 获取压缩评分（v2新增）
             compression_score = compression_event.compression_score if compression_event else None
 
             # 计算止损和止盈价格
@@ -377,7 +377,7 @@ class VCBMarketMonitor:
 
                 logger.info(f"📊 {symbol} 开仓: 入场={price:.4f}, 止损={stop_loss:.4f}, 止盈={take_profit:.4f}")
 
-                # 记录开仓交易（V0.2添加压缩评分）
+                # 记录开仓交易（v2添加压缩评分）
                 self._record_trade(
                     symbol=symbol,
                     trade_type=trade_type,
@@ -385,7 +385,7 @@ class VCBMarketMonitor:
                     trade_amount=self.trade_amount,
                     fee=fee,
                     leverage=actual_leverage,
-                    compression_score=compression_score,  # V0.2新增
+                    compression_score=compression_score,  # v2新增
                     pnl=None  # 开仓时无盈亏
                 )
             else:
@@ -394,7 +394,7 @@ class VCBMarketMonitor:
                 old_entry_price = self.positions[symbol]['entry_price']
                 # 获取旧仓位的开仓手续费（如果存在）
                 old_entry_fee = self.positions[symbol].get('entry_fee', self.trade_amount * 0.0005)
-                # 获取旧仓位的压缩事件和评分（V0.2新增）
+                # 获取旧仓位的压缩事件和评分（v2新增）
                 old_compression_event = self.positions[symbol].get('compression_event')
                 old_compression_score = old_compression_event.compression_score if old_compression_event else None
 
@@ -417,7 +417,7 @@ class VCBMarketMonitor:
                                 f"毛利={gross_pnl:.4f} USDT, 手续费={old_entry_fee + close_fee:.4f} USDT, "
                                 f"净盈亏={net_pnl:.4f} USDT")
 
-                    # 记录平仓交易（V0.2添加压缩评分）
+                    # 记录平仓交易（v2添加压缩评分）
                     close_trade_type = "做多平仓" if old_position == 1 else "做空平仓"
                     self._record_trade(
                         symbol=symbol,
@@ -426,7 +426,7 @@ class VCBMarketMonitor:
                         trade_amount=self.trade_amount,
                         fee=close_fee,
                         leverage=actual_leverage,
-                        compression_score=old_compression_score,  # V0.2新增
+                        compression_score=old_compression_score,  # v2新增
                         pnl=net_pnl  # 记录净盈亏
                     )
 
@@ -484,7 +484,7 @@ class VCBMarketMonitor:
 
                 logger.info(f"📊 {symbol} 换仓: 入场={price:.4f}, 止损={new_stop_loss:.4f}, 止盈={new_take_profit:.4f}")
 
-                # 记录新开仓交易（V0.2添加压缩评分）
+                # 记录新开仓交易（v2添加压缩评分）
                 self._record_trade(
                     symbol=symbol,
                     trade_type=trade_type,
@@ -492,7 +492,7 @@ class VCBMarketMonitor:
                     trade_amount=self.trade_amount,
                     fee=fee,
                     leverage=actual_leverage,
-                    compression_score=compression_score,  # V0.2新增
+                    compression_score=compression_score,  # v2新增
                     pnl=None  # 开仓时无盈亏
                 )
 
@@ -674,7 +674,7 @@ class VCBMarketMonitor:
 
             # 获取开仓手续费（如果存在）
             entry_fee = position_info.get('entry_fee', self.trade_amount * 0.0005)
-            # 获取压缩事件和评分（V0.2新增）
+            # 获取压缩事件和评分（v2新增）
             compression_event = position_info.get('compression_event')
             compression_score = compression_event.compression_score if compression_event else None
 
@@ -698,7 +698,7 @@ class VCBMarketMonitor:
                         f"收益率={return_rate * 100:.2f}%, 毛利={gross_pnl:.4f} USDT, "
                         f"手续费={entry_fee + close_fee:.4f} USDT, 净盈亏={net_pnl:.4f} USDT")
 
-            # 记录平仓交易（V0.2添加压缩评分）
+            # 记录平仓交易（v2添加压缩评分）
             self._record_trade(
                 symbol=symbol,
                 trade_type=close_trade_type,
@@ -706,7 +706,7 @@ class VCBMarketMonitor:
                 trade_amount=self.trade_amount,
                 fee=close_fee,
                 leverage=actual_leverage,
-                compression_score=compression_score,  # V0.2新增
+                compression_score=compression_score,  # v2新增
                 pnl=net_pnl  # 记录净盈亏
             )
 
