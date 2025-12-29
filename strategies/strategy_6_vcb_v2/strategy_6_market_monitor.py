@@ -1105,7 +1105,7 @@ class VCBMarketMonitor:
         try:
             self.start()
 
-            # 等待到下一分钟开始时再开始打印状态
+            # 等待到下一分钟开始时再开始检查状态
             from datetime import timedelta
             now = datetime.now()
             next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -1113,21 +1113,47 @@ class VCBMarketMonitor:
             if wait_seconds > 0:
                 time.sleep(wait_seconds)
 
-            # 主循环：每分钟00秒打印状态
+            # 初始化状态跟踪
+            last_pool_size = 0
+            last_position_count = 0
+            last_pool_symbols = set()
+            last_status_print_time = datetime.now()
+
+            # 主循环：每分钟30秒检查状态，有变化立即打印，无变化5分钟打印一次
             while self.running:
-                # 打印当前状态
+                # 获取当前状态
                 pool_size = self.strategy.get_compression_pool_size()
                 pool_symbols = self.strategy.get_compression_pool_symbols()
                 position_count = len([p for p in self.positions.values() if p['position'] != 0])
+                current_pool_symbols = set(pool_symbols)
 
-                logger.info(f"[状态] 压缩池: {pool_size} 个币种, 持仓: {position_count} 个")
-                if pool_symbols:
-                    logger.info(f"[状态] 压缩池币种: {', '.join(pool_symbols[:10])}" +
-                                (f" ... (共{len(pool_symbols)}个)" if len(pool_symbols) > 10 else ""))
+                # 检查状态是否有变化
+                state_changed = (
+                    pool_size != last_pool_size or
+                    position_count != last_position_count or
+                    current_pool_symbols != last_pool_symbols
+                )
 
-                # 等待到下一分钟开始时再打印
+                # 检查是否已经过了5分钟（无变化时）
                 now = datetime.now()
-                next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+                time_since_last_print = (now - last_status_print_time).total_seconds()
+                should_print_interval = time_since_last_print >= 5 * 60  # 5分钟
+
+                # 如果状态有变化或已经过了5分钟，打印状态
+                if state_changed or should_print_interval:
+                    logger.info(f"[状态] 压缩池: {pool_size} 个币种, 持仓: {position_count} 个")
+                    if pool_symbols:
+                        logger.info(f"[状态] 压缩池币种: {', '.join(pool_symbols[:10])}" +
+                                    (f" ... (共{len(pool_symbols)}个)" if len(pool_symbols) > 10 else ""))
+                    
+                    # 更新状态跟踪
+                    last_pool_size = pool_size
+                    last_position_count = position_count
+                    last_pool_symbols = current_pool_symbols
+                    last_status_print_time = now
+
+                # 等待到下一分钟开始时再检查
+                next_minute = now.replace(second=30, microsecond=0) + timedelta(minutes=1)
                 wait_seconds = (next_minute - now).total_seconds()
                 if wait_seconds > 0:
                     time.sleep(wait_seconds)

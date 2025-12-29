@@ -1,5 +1,5 @@
 {
-  "min_vol_ccy": 100000000,
+  "min_vol_ccy": 10000000,
   "currency": "USDT",
   "inst_type": "SWAP",
   "scan_interval_minutes": 5,
