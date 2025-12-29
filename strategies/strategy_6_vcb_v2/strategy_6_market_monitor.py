@@ -844,6 +844,30 @@ class VCBMarketMonitor:
     def _scan_loop(self):
         """扫描循环（生产者线程）"""
         logger.info("启动市场扫描线程（生产者）...")
+        
+        # v2.1新增：等待到下一个5分钟整数倍时间点再开始第一次扫描
+        # 例如：如果现在是08:14，等待到08:15；如果是12:55，等待到13:00
+        from datetime import timedelta
+        now = datetime.now()
+        current_minute = now.minute
+        
+        # 计算到下一个5分钟整数倍需要等待的分钟数
+        remainder = current_minute % 5
+        if remainder == 0:
+            # 如果正好是5的倍数，等待下一个5分钟周期（5分钟）
+            minutes_to_wait = 5
+        else:
+            # 否则等待到下一个5分钟整数倍
+            minutes_to_wait = 5 - remainder
+        
+        # 计算下一个5分钟整数倍的时间点（秒数和微秒归零）
+        next_scan_time = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_wait)
+        
+        wait_seconds = (next_scan_time - now).total_seconds()
+        if wait_seconds > 0:
+            logger.info(f"⏰ 等待到下一个5分钟整数倍时间点 ({next_scan_time.strftime('%H:%M')}) 再开始第一次扫描（还需等待 {int(wait_seconds)} 秒）...")
+            time.sleep(wait_seconds)
+            logger.info(f"✅ 到达扫描时间点 ({datetime.now().strftime('%H:%M:%S')})，开始第一次市场扫描")
 
         while self.running:
             try:

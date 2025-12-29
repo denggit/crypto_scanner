@@ -192,9 +192,16 @@ class VCBStrategy:
             dict: 包含压缩评分和各项指标得分的字典
         """
         try:
-            # 1. ATR相对压缩得分 (30%)
-            if len(atr_mid) > 0 and atr_mid.iloc[-1] != 0:
-                atr_ratio = atr_short.iloc[-1] / atr_mid.iloc[-1]
+            # 确保至少有2根K线（需要前一根已完成的K线）
+            if len(atr_mid) < 2 or len(atr_short) < 2:
+                return {
+                    'total_score': 0, 'atr_score': 0, 'duration_score': 0, 'volume_score': 0,
+                    'range_score': 0, 'ma_score': 0, 'atr_ratio': 1.0
+                }
+
+            # 1. ATR相对压缩得分 (30%) - 使用前一根已完成的K线
+            if atr_mid.iloc[-2] != 0:
+                atr_ratio = atr_short.iloc[-2] / atr_mid.iloc[-2]
                 # ATR比率越低得分越高，使用反向线性映射：0.3->100分，0.7->0分
                 atr_score = max(0, min(100, 250 - 250 * atr_ratio))  # 0.3=100, 0.7=0
             else:
@@ -202,27 +209,27 @@ class VCBStrategy:
                 atr_ratio = 1.0
 
             # 2. 压缩持续时间得分 (25%)
-            # 计算最近20根K线中ATR比率低于0.6的比例
-            lookback = min(20, len(atr_short), len(atr_mid))
+            # 计算最近20根已完成的K线中ATR比率低于0.6的比例（排除当前未完成的K线）
+            lookback = min(20, len(atr_short) - 1, len(atr_mid) - 1)
             if lookback > 0:
                 atr_ratios = []
-                for i in range(1, lookback + 1):
+                for i in range(2, lookback + 2):  # 从-2开始，排除-1（当前未完成的K线）
                     if atr_mid.iloc[-i] != 0:
                         atr_ratios.append(atr_short.iloc[-i] / atr_mid.iloc[-i])
                 if atr_ratios:
                     low_atr_ratio_count = sum(1 for ratio in atr_ratios if ratio < 0.6)
-                    duration_score = (low_atr_ratio_count / lookback) * 100
+                    duration_score = (low_atr_ratio_count / len(atr_ratios)) * 100
                 else:
                     duration_score = 0
             else:
                 duration_score = 0
 
             # 3. 成交量健康度得分 (20%)
-            # 检查成交量是否稳定，而不是萎缩
-            if len(volumes) >= 20:
-                recent_volumes = volumes.iloc[-10:]  # 最近10根K线
+            # 检查成交量是否稳定，而不是萎缩（排除当前未完成的K线）
+            if len(volumes) >= 21:  # 需要21根以确保有20根已完成的K线
+                recent_volumes = volumes.iloc[-11:-1]  # 最近10根已完成的K线（排除当前）
                 avg_recent_volume = recent_volumes.mean()
-                avg_volume_20 = volumes.iloc[-20:].mean()
+                avg_volume_20 = volumes.iloc[-21:-1].mean()  # 最近20根已完成的K线
                 if avg_volume_20 > 0:
                     volume_ratio = avg_recent_volume / avg_volume_20
                     # 0.8-1.2之间得分最高，过高或过低都扣分
@@ -238,14 +245,14 @@ class VCBStrategy:
                 volume_score = 0
 
             # 4. 价格区间收敛得分 (15%)
-            # 计算最近10根K线的价格范围与20根K线的价格范围之比
-            if len(highs) >= 20 and len(lows) >= 20:
-                recent_high = highs.iloc[-10:].max()
-                recent_low = lows.iloc[-10:].min()
+            # 计算最近10根已完成的K线的价格范围与20根已完成的K线的价格范围之比
+            if len(highs) >= 21 and len(lows) >= 21:
+                recent_high = highs.iloc[-11:-1].max()  # 最近10根已完成的K线
+                recent_low = lows.iloc[-11:-1].min()
                 recent_range = recent_high - recent_low
 
-                prev_high = highs.iloc[-20:-10].max()
-                prev_low = lows.iloc[-20:-10].min()
+                prev_high = highs.iloc[-21:-11].max()  # 前10根已完成的K线
+                prev_low = lows.iloc[-21:-11].min()
                 prev_range = prev_high - prev_low
 
                 if prev_range > 0:
@@ -258,17 +265,17 @@ class VCBStrategy:
                 range_score = 0
 
             # 5. 均线聚合度得分 (10%)
-            # 检查短期均线（5, 10, 20）是否聚合
-            if len(closes) >= 20:
+            # 检查短期均线（5, 10, 20）是否聚合（使用前一根已完成的K线）
+            if len(closes) >= 21:  # 需要21根以确保有20根已完成的K线用于计算均线
                 from tools.technical_indicators import sma
                 ma5 = sma(closes, 5)
                 ma10 = sma(closes, 10)
                 ma20 = sma(closes, 20)
 
-                if len(ma5) > 0 and len(ma10) > 0 and len(ma20) > 0:
-                    ma5_val = ma5.iloc[-1]
-                    ma10_val = ma10.iloc[-1]
-                    ma20_val = ma20.iloc[-1]
+                if len(ma5) >= 2 and len(ma10) >= 2 and len(ma20) >= 2:
+                    ma5_val = ma5.iloc[-2]  # 使用前一根K线对应的均线值
+                    ma10_val = ma10.iloc[-2]
+                    ma20_val = ma20.iloc[-2]
 
                     if ma20_val > 0:
                         # 计算均线之间的最大差距百分比
@@ -331,22 +338,28 @@ class VCBStrategy:
         try:
             from tools.technical_indicators import atr, sma
 
+            # 确保至少有2根K线
+            if len(df_15m) < 2:
+                return False, {"error": "15分钟K线数据不足"}
+
             # 获取价格数据
             closes_15m = df_15m['c'] if 'c' in df_15m.columns else df_15m['close']
             highs_15m = df_15m['h'] if 'h' in df_15m.columns else df_15m['high']
             lows_15m = df_15m['l'] if 'l' in df_15m.columns else df_15m['low']
 
-            current_close = closes_15m.iloc[-1]
+            # 使用前一根已完成的K线数据（iloc[-2]）进行判断
+            current_close = closes_15m.iloc[-2]
 
             # 1. 趋势方向确认
             # 计算20周期均线（5小时均线）和50周期均线（12.5小时均线）
             ma20_15m = sma(closes_15m, 20)
             ma50_15m = sma(closes_15m, 50)
 
-            if len(ma20_15m) < 1:
+            if len(ma20_15m) < 2:
                 return False, {"error": "MA20计算失败"}
 
-            current_ma20 = ma20_15m.iloc[-1]
+            # 使用前一根K线对应的均线值
+            current_ma20 = ma20_15m.iloc[-2]
 
             # 价格偏离度 = abs(收盘价 - MA20) / MA20 * 100
             price_deviation = abs(current_close - current_ma20) / current_ma20 * 100 if current_ma20 != 0 else 100
@@ -358,26 +371,35 @@ class VCBStrategy:
             # 计算ATR(14) - 最近3.5小时ATR
             atr_14_15m = atr(df_15m, 14)
 
-            if len(atr_14_15m) < 1:
+            if len(atr_14_15m) < 2:
                 return False, {"error": "ATR计算失败"}
 
-            current_atr_14 = atr_14_15m.iloc[-1]
+            # 使用前一根K线对应的ATR值
+            current_atr_14 = atr_14_15m.iloc[-2]
             atr_relative_level = current_atr_14 / current_close * 100 if current_close != 0 else 100
 
             # 波动率过高：ATR相对水平 > threshold
             volatility_too_high = atr_relative_level > atr_relative_threshold
 
             # 3. 价格结构确认
-            # 最近5根15分钟K线（75分钟）的最大振幅
-            lookback_5 = min(5, len(highs_15m))
-            recent_high_5 = float(highs_15m.iloc[-lookback_5:].max())
-            recent_low_5 = float(lows_15m.iloc[-lookback_5:].min())
+            # 最近5根已完成的15分钟K线（75分钟）的最大振幅（排除当前未完成的K线）
+            lookback_5 = min(5, len(highs_15m) - 1)
+            if lookback_5 > 0:
+                recent_high_5 = float(highs_15m.iloc[-lookback_5-1:-1].max())
+                recent_low_5 = float(lows_15m.iloc[-lookback_5-1:-1].min())
+            else:
+                recent_high_5 = float(highs_15m.iloc[-2])
+                recent_low_5 = float(lows_15m.iloc[-2])
             amplitude_75min = (recent_high_5 - recent_low_5) / recent_low_5 * 100 if recent_low_5 != 0 else 100
 
-            # 最近20根15分钟K线（5小时）的最大振幅
-            lookback_20 = min(20, len(highs_15m))
-            recent_high_20 = float(highs_15m.iloc[-lookback_20:].max())
-            recent_low_20 = float(lows_15m.iloc[-lookback_20:].min())
+            # 最近20根已完成的15分钟K线（5小时）的最大振幅（排除当前未完成的K线）
+            lookback_20 = min(20, len(highs_15m) - 1)
+            if lookback_20 > 0:
+                recent_high_20 = float(highs_15m.iloc[-lookback_20-1:-1].max())
+                recent_low_20 = float(lows_15m.iloc[-lookback_20-1:-1].min())
+            else:
+                recent_high_20 = float(highs_15m.iloc[-2])
+                recent_low_20 = float(lows_15m.iloc[-2])
             amplitude_5h = (recent_high_20 - recent_low_20) / recent_low_20 * 100 if recent_low_20 != 0 else 100
 
             # 振幅比率 = 75分钟振幅 / 5小时振幅
@@ -502,12 +524,13 @@ class VCBStrategy:
             atr_short_5m = atr(df_5m, atr_short_period)
             atr_mid_5m = atr(df_5m, atr_mid_period)
 
-            if len(atr_short_5m) < 1 or len(atr_mid_5m) < 1:
+            # 确保至少有2根K线（需要前一根已完成的K线）
+            if len(atr_short_5m) < 2 or len(atr_mid_5m) < 2:
                 return None
 
-            # 获取最新值
-            current_atr_short_5m = atr_short_5m.iloc[-1]
-            current_atr_mid_5m = atr_mid_5m.iloc[-1]
+            # 使用前一根已完成的K线数据（iloc[-2]）进行判断，避免使用未完成的当前K线
+            current_atr_short_5m = atr_short_5m.iloc[-2]
+            current_atr_mid_5m = atr_mid_5m.iloc[-2]
 
             if pd.isna(current_atr_short_5m) or pd.isna(current_atr_mid_5m) or current_atr_mid_5m == 0:
                 return None
@@ -522,13 +545,14 @@ class VCBStrategy:
             # 计算布林带
             bb_upper_5m, bb_middle_5m, bb_lower_5m = bollinger_bands(closes_5m, bb_period, bb_std)
 
-            if len(bb_upper_5m) < 1 or len(bb_middle_5m) < 1 or len(bb_lower_5m) < 1:
+            # 确保至少有2根K线
+            if len(bb_upper_5m) < 2 or len(bb_middle_5m) < 2 or len(bb_lower_5m) < 2:
                 return None
 
-            # 获取最新值
-            current_bb_upper_5m = bb_upper_5m.iloc[-1]
-            current_bb_middle_5m = bb_middle_5m.iloc[-1]
-            current_bb_lower_5m = bb_lower_5m.iloc[-1]
+            # 使用前一根已完成的K线数据（iloc[-2]）进行判断
+            current_bb_upper_5m = bb_upper_5m.iloc[-2]
+            current_bb_middle_5m = bb_middle_5m.iloc[-2]
+            current_bb_lower_5m = bb_lower_5m.iloc[-2]
 
             if pd.isna(current_bb_upper_5m) or pd.isna(current_bb_middle_5m) or pd.isna(current_bb_lower_5m):
                 return None
@@ -536,9 +560,11 @@ class VCBStrategy:
             # 计算布林带宽度
             bb_width_5m = (current_bb_upper_5m - current_bb_lower_5m) / current_bb_middle_5m if current_bb_middle_5m != 0 else 0
 
-            # 计算60根K线的平均布林带宽度（用于相对比较）
-            if len(bb_upper_5m) >= 60:
-                bb_width_60_mean_5m = ((bb_upper_5m.iloc[-60:] - bb_lower_5m.iloc[-60:]) / bb_middle_5m.iloc[-60:]).mean()
+            # 计算60根K线的平均布林带宽度（用于相对比较，排除当前未完成的K线）
+            if len(bb_upper_5m) >= 61:  # 需要61根以确保有60根已完成的K线
+                bb_width_60_mean_5m = ((bb_upper_5m.iloc[-61:-1] - bb_lower_5m.iloc[-61:-1]) / bb_middle_5m.iloc[-61:-1]).mean()
+            elif len(bb_upper_5m) >= 60:
+                bb_width_60_mean_5m = ((bb_upper_5m.iloc[-60:-1] - bb_lower_5m.iloc[-60:-1]) / bb_middle_5m.iloc[-60:-1]).mean()
             else:
                 bb_width_60_mean_5m = bb_width_5m
 
@@ -601,10 +627,14 @@ class VCBStrategy:
 
             logger.info(f"{symbol} 15分钟周期验证通过: {validation_details}")
 
-            # 计算压缩区间的高低点（使用最近20根5分钟K线的最高价和最低价）
-            compression_period = min(20, len(highs_5m))
-            compression_high = float(highs_5m.iloc[-compression_period:].max())
-            compression_low = float(lows_5m.iloc[-compression_period:].min())
+            # 计算压缩区间的高低点（使用最近20根已完成的5分钟K线的最高价和最低价，排除当前未完成的K线）
+            compression_period = min(20, len(highs_5m) - 1)  # 减1以排除当前未完成的K线
+            if compression_period > 0:
+                compression_high = float(highs_5m.iloc[-compression_period-1:-1].max())
+                compression_low = float(lows_5m.iloc[-compression_period-1:-1].min())
+            else:
+                compression_high = float(highs_5m.iloc[-2])
+                compression_low = float(lows_5m.iloc[-2])
 
             # v2.1新增：计算突破水平和失效水平（使用配置参数）
             # 突破水平：压缩区间边界 ± breakout_threshold（v2.1从1%降低到0.2%）
@@ -700,7 +730,8 @@ class VCBStrategy:
                                    body_atr_multiplier: float = 0.4,
                                    shadow_ratio: float = 0.5,
                                    volume_min_multiplier: float = 1.2,  # v2.1从1.5降低到1.2
-                                   new_high_low_lookback: int = 10) -> dict:
+                                   new_high_low_lookback: int = 10,
+                                   use_previous_bar: bool = False) -> dict:
         """
         评估突破质量（v2.1新增）
 
@@ -711,53 +742,76 @@ class VCBStrategy:
         4. 创局部新高/新低（动量）
 
         Args:
-            df: 包含当前K线的DataFrame
-            current_close: 当前收盘价
-            current_volume: 当前成交量
+            df: 包含K线的DataFrame
+            current_close: 收盘价（应该是前一根已完成的K线）
+            current_volume: 成交量（应该是前一根已完成的K线）
             atr_14: ATR(14)序列
             highs: 最高价序列
             lows: 最低价序列
             closes: 收盘价序列
             volumes: 成交量序列
+            use_previous_bar: 是否使用前一根K线（默认False，向后兼容）
 
         Returns:
             dict: 包含各项条件评估结果和质量得分
         """
         try:
-            # 获取当前K线的开盘价
-            current_open = df['o'].iloc[-1] if 'o' in df.columns else closes.iloc[-2]
+            # 确定使用哪根K线的索引（-1为当前K线，-2为前一根已完成的K线）
+            bar_idx = -2 if use_previous_bar else -1
+            
+            # 确保有足够的数据
+            if len(closes) < abs(bar_idx):
+                return {
+                    'condition1': False, 'condition2': False, 'condition3': False, 'condition4': False,
+                    'conditions_met': 0, 'quality_pass': False, 'candle_body': 0, 'atr_14_value': 0, 'max_shadow': 0
+                }
+            
+            # 获取K线的开盘价（使用前一根已完成的K线）
+            current_open = df['o'].iloc[bar_idx] if 'o' in df.columns else closes.iloc[bar_idx - 1] if bar_idx < -1 else closes.iloc[bar_idx]
 
             # 1. 实体大小条件
             candle_body = abs(current_close - current_open)
-            atr_14_value = atr_14.iloc[-1] if len(atr_14) > 0 else 0
+            # ATR值使用前一根K线对应的值（ATR是基于已完成的K线计算的）
+            atr_14_value = atr_14.iloc[bar_idx] if len(atr_14) > abs(bar_idx) else 0
             condition1 = candle_body >= body_atr_multiplier * atr_14_value if atr_14_value > 0 else False
 
-            # 2. 影线长度条件
+            # 2. 影线长度条件（使用前一根K线的最高价和最低价）
             if current_close > current_open:  # 阳线
-                upper_shadow = highs.iloc[-1] - current_close
-                lower_shadow = current_open - lows.iloc[-1]
+                upper_shadow = highs.iloc[bar_idx] - current_close
+                lower_shadow = current_open - lows.iloc[bar_idx]
             else:  # 阴线
-                upper_shadow = highs.iloc[-1] - current_open
-                lower_shadow = current_close - lows.iloc[-1]
+                upper_shadow = highs.iloc[bar_idx] - current_open
+                lower_shadow = current_close - lows.iloc[bar_idx]
 
             max_shadow = max(upper_shadow, lower_shadow)
             condition2 = max_shadow < shadow_ratio * candle_body if candle_body > 0 else True
 
             # 3. 成交量条件
-            # 检查成交量是否显著高于最近N根K线的最低成交量
+            # 检查成交量是否显著高于最近N根K线的最低成交量（不包括当前未完成的K线）
             lookback = min(new_high_low_lookback, len(volumes))
             if lookback > 0:
-                min_recent_volume = volumes.iloc[-lookback:].min()
+                # 如果使用前一根K线，则回看范围需要排除当前未完成的K线
+                if use_previous_bar:
+                    min_recent_volume = volumes.iloc[-lookback-1:-1].min() if len(volumes) > lookback + 1 else volumes.iloc[:-1].min()
+                else:
+                    min_recent_volume = volumes.iloc[-lookback:].min()
                 condition3 = current_volume > volume_min_multiplier * min_recent_volume if min_recent_volume > 0 else False
             else:
                 condition3 = False
 
-            # 4. 创新高/新低条件
+            # 4. 创新高/新低条件（使用前一根K线之前的数据进行比较）
             lookback_high_low = min(new_high_low_lookback, len(highs), len(lows))
             if lookback_high_low > 0:
-                # 检查是否创10根K线新高或新低
-                is_new_high = current_close == highs.iloc[-lookback_high_low:].max()
-                is_new_low = current_close == lows.iloc[-lookback_high_low:].min()
+                # 如果使用前一根K线，则回看范围需要排除当前未完成的K线
+                if use_previous_bar:
+                    recent_highs = highs.iloc[-lookback_high_low-1:-1] if len(highs) > lookback_high_low + 1 else highs.iloc[:-1]
+                    recent_lows = lows.iloc[-lookback_high_low-1:-1] if len(lows) > lookback_high_low + 1 else lows.iloc[:-1]
+                else:
+                    recent_highs = highs.iloc[-lookback_high_low:]
+                    recent_lows = lows.iloc[-lookback_high_low:]
+                # 检查是否创回看周期内的新高或新低
+                is_new_high = current_close >= recent_highs.max()
+                is_new_low = current_close <= recent_lows.min()
                 condition4 = is_new_high or is_new_low
             else:
                 condition4 = False
@@ -846,19 +900,22 @@ class VCBStrategy:
             from tools.technical_indicators import atr
             atr_14 = atr(df, 14)
 
-            if len(closes) < 1 or len(volumes) < volume_period:
+            # 确保至少有2根K线（需要前一根已完成的K线）
+            if len(closes) < 2 or len(volumes) < volume_period + 1:
                 return 0, {}
 
-            current_close = closes.iloc[-1]
-            current_volume = volumes.iloc[-1]
+            # 使用前一根已完成的K线数据（iloc[-2]）进行判断，避免使用未完成的当前K线
+            current_close = closes.iloc[-2]
+            current_volume = volumes.iloc[-2]
 
-            # 计算成交量均线
+            # 计算成交量均线（使用前一根K线之前的数据，不包括当前未完成的K线）
             volume_ma = sma(volumes, volume_period)
 
-            if len(volume_ma) < 1 or pd.isna(volume_ma.iloc[-1]):
+            if len(volume_ma) < 2 or pd.isna(volume_ma.iloc[-2]):
                 return 0, {}
 
-            avg_volume = volume_ma.iloc[-1]
+            # 使用前一根K线对应的均线值
+            avg_volume = volume_ma.iloc[-2]
 
             # v2.1修改：成交量需要≥volume_multiplier×20均量（v2.1从1.5倍降低到1.2倍，允许温和放量启动）
             volume_expansion = current_volume >= volume_multiplier * avg_volume
@@ -895,7 +952,7 @@ class VCBStrategy:
                 'compression_event': compression_event  # 添加压缩事件，用于结构验证和止损计算
             }
 
-            # 评估突破质量
+            # 评估突破质量（使用前一根K线数据）
             quality_result = self._evaluate_breakout_quality(
                 df=df,
                 current_close=current_close,
@@ -908,7 +965,8 @@ class VCBStrategy:
                 body_atr_multiplier=breakout_body_atr_multiplier,
                 shadow_ratio=breakout_shadow_ratio,
                 volume_min_multiplier=breakout_volume_min_multiplier,
-                new_high_low_lookback=breakout_new_high_low_lookback
+                new_high_low_lookback=breakout_new_high_low_lookback,
+                use_previous_bar=True  # 标记使用前一根K线
             )
             details['breakout_quality'] = quality_result
 
@@ -1019,9 +1077,11 @@ class VCBStrategy:
                         atr_short = atr(df, atr_short_period)
                         atr_mid = atr(df, atr_mid_period)
 
-                        if len(atr_short) > 0 and len(atr_mid) > 0:
-                            current_atr_short = atr_short.iloc[-1]
-                            current_atr_mid = atr_mid.iloc[-1]
+                        # 确保至少有2根K线（需要前一根已完成的K线）
+                        if len(atr_short) >= 2 and len(atr_mid) >= 2:
+                            # 使用前一根已完成的K线数据（iloc[-2]）进行判断
+                            current_atr_short = atr_short.iloc[-2]
+                            current_atr_mid = atr_mid.iloc[-2]
 
                             if not pd.isna(current_atr_short) and not pd.isna(current_atr_mid) and current_atr_mid != 0:
                                 current_atr_ratio = current_atr_short / current_atr_mid
@@ -1063,7 +1123,8 @@ class VCBStrategy:
             limit = max(atr_mid_period, bb_period) + 5
             df = self.market_data_retriever.get_kline(symbol, bar, limit)
 
-            if df is None or len(df) < limit:
+            # 确保至少有2根K线（需要前一根已完成的K线）
+            if df is None or len(df) < max(limit, 2):
                 return {}
 
             closes = df['c'] if 'c' in df.columns else df['close']
@@ -1076,14 +1137,15 @@ class VCBStrategy:
             # 计算布林带
             bb_upper, bb_middle, bb_lower = bollinger_bands(closes, bb_period, bb_std)
 
-            current_close = closes.iloc[-1]
-            current_atr_short = atr_short.iloc[-1] if len(atr_short) > 0 else 0
-            current_atr_mid = atr_mid.iloc[-1] if len(atr_mid) > 0 else 0
+            # 使用前一根已完成的K线数据（iloc[-2]）进行判断
+            current_close = closes.iloc[-2] if len(closes) >= 2 else closes.iloc[-1]
+            current_atr_short = atr_short.iloc[-2] if len(atr_short) >= 2 else (atr_short.iloc[-1] if len(atr_short) > 0 else 0)
+            current_atr_mid = atr_mid.iloc[-2] if len(atr_mid) >= 2 else (atr_mid.iloc[-1] if len(atr_mid) > 0 else 0)
             atr_ratio = current_atr_short / current_atr_mid if current_atr_mid != 0 else 0
 
-            current_bb_upper = bb_upper.iloc[-1] if len(bb_upper) > 0 else 0
-            current_bb_middle = bb_middle.iloc[-1] if len(bb_middle) > 0 else 0
-            current_bb_lower = bb_lower.iloc[-1] if len(bb_lower) > 0 else 0
+            current_bb_upper = bb_upper.iloc[-2] if len(bb_upper) >= 2 else (bb_upper.iloc[-1] if len(bb_upper) > 0 else 0)
+            current_bb_middle = bb_middle.iloc[-2] if len(bb_middle) >= 2 else (bb_middle.iloc[-1] if len(bb_middle) > 0 else 0)
+            current_bb_lower = bb_lower.iloc[-2] if len(bb_lower) >= 2 else (bb_lower.iloc[-1] if len(bb_lower) > 0 else 0)
             bb_width = (current_bb_upper - current_bb_lower) / current_bb_middle if current_bb_middle != 0 else 0
 
             # 检查是否在压缩池中
