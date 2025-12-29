@@ -1105,10 +1105,16 @@ class VCBMarketMonitor:
         try:
             self.start()
 
-            # 主循环：定期打印状态
-            while self.running:
-                time.sleep(60)  # 每分钟打印一次状态
+            # 等待到下一分钟开始时再开始打印状态
+            from datetime import timedelta
+            now = datetime.now()
+            next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+            wait_seconds = (next_minute - now).total_seconds()
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
 
+            # 主循环：每分钟00秒打印状态
+            while self.running:
                 # 打印当前状态
                 pool_size = self.strategy.get_compression_pool_size()
                 pool_symbols = self.strategy.get_compression_pool_symbols()
@@ -1118,6 +1124,16 @@ class VCBMarketMonitor:
                 if pool_symbols:
                     logger.info(f"[状态] 压缩池币种: {', '.join(pool_symbols[:10])}" +
                                 (f" ... (共{len(pool_symbols)}个)" if len(pool_symbols) > 10 else ""))
+
+                # 等待到下一分钟开始时再打印
+                now = datetime.now()
+                next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+                wait_seconds = (next_minute - now).total_seconds()
+                if wait_seconds > 0:
+                    time.sleep(wait_seconds)
+                else:
+                    # 如果已经过了，等待1秒后继续
+                    time.sleep(1)
 
         except KeyboardInterrupt:
             logger.info("\n收到停止信号...")
