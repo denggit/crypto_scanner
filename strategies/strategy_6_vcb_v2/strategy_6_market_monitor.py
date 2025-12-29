@@ -845,29 +845,40 @@ class VCBMarketMonitor:
         """扫描循环（生产者线程）"""
         logger.info("启动市场扫描线程（生产者）...")
         
-        # v2.1新增：等待到下一个5分钟整数倍时间点再开始第一次扫描
-        # 例如：如果现在是08:14，等待到08:15；如果是12:55，等待到13:00
+        # v2.1修改：第一次启动时，如果还在5分钟间隔的第一分钟内（分钟数%5==0且秒数<60），可以直接开始
+        # 否则等待到下一个5分钟整数倍时间点
         from datetime import timedelta
         now = datetime.now()
         current_minute = now.minute
+        current_second = now.second
         
-        # 计算到下一个5分钟整数倍需要等待的分钟数
-        remainder = current_minute % 5
-        if remainder == 0:
-            # 如果正好是5的倍数，等待下一个5分钟周期（5分钟）
-            minutes_to_wait = 5
+        # 检查是否在5分钟间隔的第一分钟内
+        is_first_minute = (current_minute % 5 == 0) and (current_second < 60)
+        
+        if is_first_minute:
+            # 在第一分钟内，可以直接开始第一次扫描
+            logger.info(f"✅ 当前时间在5分钟间隔的第一分钟内 ({now.strftime('%H:%M:%S')})，立即开始第一次扫描")
         else:
-            # 否则等待到下一个5分钟整数倍
-            minutes_to_wait = 5 - remainder
+            # 不在第一分钟内，等待到下一个5分钟整数倍时间点
+            remainder = current_minute % 5
+            if remainder == 0:
+                # 如果正好是5的倍数，等待下一个5分钟周期（5分钟）
+                minutes_to_wait = 5
+            else:
+                # 否则等待到下一个5分钟整数倍
+                minutes_to_wait = 5 - remainder
+            
+            # 计算下一个5分钟整数倍的时间点（秒数和微秒归零）
+            next_scan_time = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_wait)
+            
+            wait_seconds = (next_scan_time - now).total_seconds()
+            if wait_seconds > 0:
+                logger.info(f"⏰ 等待到下一个5分钟整数倍时间点 ({next_scan_time.strftime('%H:%M')}) 再开始第一次扫描（还需等待 {int(wait_seconds)} 秒）...")
+                time.sleep(wait_seconds)
+                logger.info(f"✅ 到达扫描时间点 ({datetime.now().strftime('%H:%M:%S')})，开始第一次市场扫描")
         
-        # 计算下一个5分钟整数倍的时间点（秒数和微秒归零）
-        next_scan_time = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_wait)
-        
-        wait_seconds = (next_scan_time - now).total_seconds()
-        if wait_seconds > 0:
-            logger.info(f"⏰ 等待到下一个5分钟整数倍时间点 ({next_scan_time.strftime('%H:%M')}) 再开始第一次扫描（还需等待 {int(wait_seconds)} 秒）...")
-            time.sleep(wait_seconds)
-            logger.info(f"✅ 到达扫描时间点 ({datetime.now().strftime('%H:%M:%S')})，开始第一次市场扫描")
+        # 标记第一次扫描已完成
+        first_scan_done = False
 
         while self.running:
             try:
@@ -902,8 +913,31 @@ class VCBMarketMonitor:
                     pre_breakout_protection_zone=self.pre_breakout_protection_zone
                 )
 
-                # 等待下次扫描
-                time.sleep(self.scan_interval_minutes * 60)
+                # 标记第一次扫描已完成
+                first_scan_done = True
+                
+                # 等待到下一个5分钟整数倍时间点（保持完美的5分钟间隔）
+                now = datetime.now()
+                current_minute = now.minute
+                remainder = current_minute % 5
+                
+                if remainder == 0:
+                    # 如果正好是5的倍数，等待下一个5分钟周期（5分钟）
+                    minutes_to_wait = 5
+                else:
+                    # 否则等待到下一个5分钟整数倍
+                    minutes_to_wait = 5 - remainder
+                
+                # 计算下一个5分钟整数倍的时间点（秒数和微秒归零）
+                next_scan_time = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_wait)
+                wait_seconds = (next_scan_time - now).total_seconds()
+                
+                if wait_seconds > 0:
+                    logger.debug(f"等待到下一个5分钟整数倍时间点 ({next_scan_time.strftime('%H:%M:%S')}) 再开始下次扫描（还需等待 {int(wait_seconds)} 秒）")
+                    time.sleep(wait_seconds)
+                else:
+                    # 如果已经过了，等待5分钟
+                    time.sleep(self.scan_interval_minutes * 60)
 
             except Exception as e:
                 logger.error(f"扫描循环出错: {e}")
@@ -913,11 +947,22 @@ class VCBMarketMonitor:
         """监控循环（消费者线程）"""
         logger.info("启动突破监控线程（消费者）...")
 
-        # 计算等待时间（根据K线周期）
-        wait_seconds = 60  # 默认1分钟
+        # 等待到下一分钟开始时启动第一次扫描
+        from datetime import timedelta
+        now = datetime.now()
+        # 计算到下一分钟开始的时间（秒数和微秒归零，分钟+1）
+        next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        wait_seconds = (next_minute - now).total_seconds()
+        if wait_seconds > 0:
+            logger.info(f"⏰ 突破监控等待到下一分钟开始 ({next_minute.strftime('%H:%M:%S')}) 再启动（还需等待 {int(wait_seconds)} 秒）...")
+            time.sleep(wait_seconds)
+            logger.info(f"✅ 到达突破监控时间点 ({datetime.now().strftime('%H:%M:%S')})，开始第一次突破扫描")
 
         while self.running:
             try:
+                # 记录扫描开始时间
+                scan_start_time = datetime.now()
+                
                 # 监控压缩池中的币种
                 breakouts = self.watcher.watch_compression_pool(
                     volume_period=self.volume_period,
@@ -941,12 +986,34 @@ class VCBMarketMonitor:
                     pre_breakout_protection_zone=self.pre_breakout_protection_zone
                 )
 
-                # 等待下次检查（每根K线检查一次）
+                # 计算扫描耗时
+                scan_end_time = datetime.now()
+                scan_duration = (scan_end_time - scan_start_time).total_seconds()
+                
+                # 计算到下一分钟开始还需要等待的时间
+                current_time = datetime.now()
+                next_minute_start = current_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
+                wait_seconds = (next_minute_start - current_time).total_seconds()
+                
+                # 如果扫描耗时超过1分钟，立即开始下一次（不等待）
+                if wait_seconds <= 0:
+                    logger.warning(f"⚠️ 突破扫描耗时 {scan_duration:.2f} 秒，超过1分钟，立即开始下一次扫描")
+                    continue
+                
+                # 等待到下一分钟开始
+                logger.debug(f"突破扫描完成，耗时 {scan_duration:.2f} 秒，等待 {wait_seconds:.2f} 秒到下一分钟开始")
                 time.sleep(wait_seconds)
 
             except Exception as e:
                 logger.error(f"监控循环出错: {e}")
-                time.sleep(60)  # 出错后等待1分钟再继续
+                # 出错后也等待到下一分钟开始
+                now = datetime.now()
+                next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+                wait_seconds = (next_minute - now).total_seconds()
+                if wait_seconds > 0:
+                    time.sleep(wait_seconds)
+                else:
+                    time.sleep(1)  # 如果已经过了，只等1秒
 
     def start(self):
         """启动监控系统"""
